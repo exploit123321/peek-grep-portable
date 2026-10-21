@@ -423,7 +423,7 @@ def _filter_clause(type_filter: str, folder: Optional[str]) -> Tuple[str, List[A
     tf = (type_filter or "all").lower()
     if tf == "docs":
         ext_marks = ",".join("?" for _ in DOC_EXTENSIONS)
-        clause += f" AND (m.category IN ('markdown', 'pdf', 'epub') OR m.extension IN ({ext_marks}))"
+        clause += f" AND (m.category IN ('markdown', 'pdf', 'epub', 'office') OR m.extension IN ({ext_marks}))"
         params.extend(DOC_EXTENSIONS)
     elif tf != "all":
         clause += " AND m.category = ?"

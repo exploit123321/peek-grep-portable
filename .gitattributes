@@ -7,3 +7,9 @@
 *.pyd binary
 *.exe binary
 *.zip binary
+*.doc binary
+*.xls binary
+*.ppt binary
+*.docx binary
+*.xlsx binary
+*.pptx binary

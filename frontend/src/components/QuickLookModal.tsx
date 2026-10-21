@@ -8,6 +8,7 @@ import { TablePreview } from './previews/TablePreview';
 import { ImagePreview } from './previews/ImagePreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { EpubPreview } from './previews/EpubPreview';
+import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/OfficePreviews';
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { prefersReducedMotion } from './motion/useReducedMotion';
@@ -122,6 +123,12 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
+      case 'document':
+        return <DocumentPreview html={current.document_html || ''} />;
+      case 'workbook':
+        return <WorkbookPreview sheets={current.sheets || []} />;
+      case 'slides':
+        return <SlidesPreview slides={current.slides || []} />;
       case 'plain':
         return <PlainPreview content={current.content || ''} />;
       default:

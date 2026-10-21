@@ -176,7 +176,7 @@ export interface PreviewPayload {
   extension: string;
   size_bytes: number;
   mtime: number;
-  preview_type: 'code' | 'markdown' | 'table' | 'image' | 'plain' | 'binary' | 'pdf' | 'epub';
+  preview_type: 'code' | 'markdown' | 'table' | 'image' | 'plain' | 'binary' | 'pdf' | 'epub' | 'document' | 'workbook' | 'slides';
   content?: string;
   language?: string;
   truncated?: boolean;
@@ -197,5 +197,24 @@ export interface PreviewPayload {
     chapters: { title?: string | null; content: string }[];
     total_chapters: number;
   };
+  document_html?: string | null;
+  sheets?: SheetData[] | null;
+  slides?: SlideData[] | null;
   raw_url?: string;
+}
+
+export interface SheetData {
+  name: string;
+  columns: string[];
+  rows: string[][];
+  total_rows: number;
+  total_columns: number;
+  truncated: boolean;
+}
+
+export interface SlideData {
+  number: number;
+  title: string;
+  paragraphs: { text: string; level: number }[];
+  images: number;
 }

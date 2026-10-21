@@ -11,6 +11,7 @@ from app.indexer.db import (
     get_unindexed_content_files,
     mark_files_fts_indexed,
 )
+from app.indexer.office import OFFICE_EXTENSIONS, extract_office_text
 from app.indexer.parsers import extract_epub_data, extract_pdf_text
 
 # Whitelisted extensions for Pass 2 deep full-text indexing
@@ -85,6 +86,9 @@ class FTSContentWorker:
             if ext == ".epub":
                 epub_info = extract_epub_data(filepath)
                 return epub_info.get("text")
+
+            if ext in OFFICE_EXTENSIONS:
+                return extract_office_text(filepath, ext)
 
             # Text / Code / CSV / Markdown
             try:

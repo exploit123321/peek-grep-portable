@@ -105,7 +105,11 @@ TIER2_FTS_EXTENSIONS: Set[str] = {
 }
 
 # All formats that get full-text indexing (the content worker reads these)
-CONTENT_INDEX_EXTENSIONS: Set[str] = TIER2_FTS_EXTENSIONS | {".pdf", ".epub"}
+CONTENT_INDEX_EXTENSIONS: Set[str] = TIER2_FTS_EXTENSIONS | {
+    ".pdf", ".epub",
+    # Microsoft Office, new and old formats (text is read by indexer/office.py)
+    ".docx", ".docm", ".doc", ".xlsx", ".xlsm", ".xls", ".pptx", ".pptm", ".ppt",
+}
 
 # Strict file size boundary for direct full-text reads by the crawler and watcher (2MB)
 MAX_FTS_SIZE_BYTES: int = 2 * 1024 * 1024

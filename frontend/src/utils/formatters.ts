@@ -32,12 +32,18 @@ export function formatCount(n: number): string {
 }
 
 /** Kind of file for icons and colors. */
-export type FileKind = 'code' | 'markdown' | 'data' | 'media' | 'pdf' | 'epub' | 'text' | 'other';
+export type FileKind = 'code' | 'markdown' | 'data' | 'media' | 'pdf' | 'epub' | 'word' | 'excel' | 'powerpoint' | 'text' | 'other';
 
-const TEXT_EXT = new Set(['.txt', '.log', '.rtf', '.ini', '.cfg', '.conf', '.env', '.doc', '.docx', '.odt']);
+const TEXT_EXT = new Set(['.txt', '.log', '.rtf', '.ini', '.cfg', '.conf', '.env', '.odt']);
+const WORD_EXT = new Set(['.doc', '.docx', '.docm']);
+const EXCEL_EXT = new Set(['.xls', '.xlsx', '.xlsm']);
+const POWERPOINT_EXT = new Set(['.ppt', '.pptx', '.pptm']);
 
 export function fileKind(category: string, extension: string): FileKind {
   const ext = extension.toLowerCase();
+  if (WORD_EXT.has(ext)) return 'word';
+  if (EXCEL_EXT.has(ext)) return 'excel';
+  if (POWERPOINT_EXT.has(ext)) return 'powerpoint';
   if (ext === '.pdf' || category === 'pdf') return 'pdf';
   if (ext === '.epub' || category === 'epub') return 'epub';
   if (category === 'code') return 'code';
@@ -55,6 +61,9 @@ export const KIND_COLORS: Record<FileKind, { fg: string; bg: string }> = {
   media: { fg: '#fcd34d', bg: 'rgba(251,191,36,0.11)' },
   pdf: { fg: '#fda4af', bg: 'rgba(251,113,133,0.11)' },
   epub: { fg: '#d8b4fe', bg: 'rgba(192,132,252,0.11)' },
+  word: { fg: '#93b4ff', bg: 'rgba(59,130,246,0.14)' },
+  excel: { fg: '#6ee7a8', bg: 'rgba(34,197,94,0.13)' },
+  powerpoint: { fg: '#fdba74', bg: 'rgba(249,115,22,0.13)' },
   text: { fg: '#c8c8d4', bg: 'rgba(255,255,255,0.06)' },
   other: { fg: '#9a9aab', bg: 'rgba(255,255,255,0.05)' },
 };

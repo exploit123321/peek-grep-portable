@@ -45,6 +45,10 @@ def get_file_category(extension: str) -> str:
         return "pdf"
     if ext == ".epub":
         return "epub"
+    if ext in (".xlsx", ".xlsm", ".xls"):
+        return "data"
+    if ext in (".docx", ".docm", ".doc", ".pptx", ".pptm", ".ppt"):
+        return "office"
     return "plain"
 
 def extract_pdf_text(filepath: str, max_pages: int = 50) -> Optional[str]:

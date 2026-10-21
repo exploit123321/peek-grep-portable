@@ -17,8 +17,8 @@ type View = 'loading' | 'onboarding' | 'search';
 const CATEGORIES = [
   { id: 'all' as const, label: 'All', icon: Layers, hint: 'Ctrl+1' },
   { id: 'code' as const, label: 'Code', icon: FileCode2, hint: 'Ctrl+2' },
-  { id: 'docs' as const, label: 'Docs', icon: FileText, hint: 'Ctrl+3: Markdown, PDF, EPUB, text' },
-  { id: 'data' as const, label: 'Data', icon: Sheet, hint: 'Ctrl+4: CSV and TSV' },
+  { id: 'docs' as const, label: 'Docs', icon: FileText, hint: 'Ctrl+3: Word, PowerPoint, PDF, Markdown, EPUB, text' },
+  { id: 'data' as const, label: 'Data', icon: Sheet, hint: 'Ctrl+4: Excel, CSV, TSV' },
   { id: 'media' as const, label: 'Images', icon: ImageIcon, hint: 'Ctrl+5' },
 ];
 

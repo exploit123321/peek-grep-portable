@@ -37,6 +37,24 @@ class ImagePreviewMeta(BaseModel):
     mode: str
     aspect_ratio: str
 
+class SheetData(BaseModel):
+    name: str
+    columns: List[str]
+    rows: List[List[str]]
+    total_rows: int
+    total_columns: int
+    truncated: bool = False
+
+class SlideParagraph(BaseModel):
+    text: str
+    level: int = 0
+
+class SlideData(BaseModel):
+    number: int
+    title: str = ""
+    paragraphs: List[SlideParagraph] = []
+    images: int = 0
+
 class EpubChapter(BaseModel):
     title: Optional[str] = None
     content: str
@@ -55,12 +73,15 @@ class PreviewResponse(BaseModel):
     extension: str
     size_bytes: int
     mtime: float
-    preview_type: str  # "code", "markdown", "table", "image", "plain", "binary", "pdf", "epub"
+    preview_type: str  # code, markdown, table, image, plain, binary, pdf, epub, document, workbook, slides
     content: Optional[str] = None
     language: Optional[str] = None
     table_data: Optional[TablePreviewData] = None
     image_meta: Optional[ImagePreviewMeta] = None
     epub_data: Optional[EpubPreviewMeta] = None
+    document_html: Optional[str] = None
+    sheets: Optional[List[SheetData]] = None
+    slides: Optional[List[SlideData]] = None
     raw_url: Optional[str] = None
     truncated: bool = False
 

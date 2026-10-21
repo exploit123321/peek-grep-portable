@@ -3,6 +3,7 @@
 import os
 import urllib.parse
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from app.indexer.parsers import (
     CODE_EXTENSIONS,
@@ -17,6 +18,7 @@ from app.indexer.parsers import (
     is_text_file,
     parse_csv_content,
 )
+from app.indexer.office import OFFICE_EXTENSIONS, extract_office, preview_kind
 from app.schemas import EpubChapter, EpubPreviewMeta, ImagePreviewMeta, PreviewResponse, TablePreviewData
 from app.state import require_allowed
 
@@ -99,6 +101,24 @@ async def get_preview(
             mtime=mtime,
             preview_type="image",
             image_meta=img_meta,
+            raw_url=raw_url,
+        )
+
+    if ext in OFFICE_EXTENSIONS:
+        try:
+            office = await run_in_threadpool(extract_office, norm_path, ext)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Cannot read this Office file: {e}")
+        return PreviewResponse(
+            path=norm_path,
+            filename=filename,
+            extension=ext,
+            size_bytes=size_bytes,
+            mtime=mtime,
+            preview_type=preview_kind(ext),
+            document_html=office.get("html"),
+            sheets=office.get("sheets"),
+            slides=office.get("slides"),
             raw_url=raw_url,
         )
 
