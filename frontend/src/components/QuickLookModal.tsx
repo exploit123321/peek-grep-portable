@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, X } from 'lucide-react';
 import { api, Delimiter, EditModel, PreviewPayload, SearchItem } from '../api';
 import { CsvEditor, DocumentEditor, TextEditor, WorkbookEditor } from './editors/Editors';
 import { useToast } from './Toasts';
@@ -13,6 +13,7 @@ import { EpubPreview } from './previews/EpubPreview';
 import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/OfficePreviews';
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
+import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
 // Quick Look grows out of the selected row and sharpens from a blur (matrix ref R03 Blur Reveal).
@@ -26,6 +27,7 @@ interface QuickLookModalProps {
   onOpen: (item: SearchItem) => void;
   onReveal: (item: SearchItem) => void;
   onCopyPath: (item: SearchItem) => void;
+  query: string;
 }
 
 export const QuickLookModal: React.FC<QuickLookModalProps> = ({
@@ -37,6 +39,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onOpen,
   onReveal,
   onCopyPath,
+  query,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<PreviewPayload | null>(null);
@@ -161,6 +164,64 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     return () => ctrl.abort();
   }, [item?.path, delimiter, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Search hits: highlight every match and scroll to the first one
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [hits, setHits] = useState<Range[]>([]);
+  const [hitIndex, setHitIndex] = useState(0);
+
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || editing || !data || !query.trim()) {
+      clearHits();
+      setHits([]);
+      return;
+    }
+    let timer = 0;
+    let firstRun = true;
+    const scan = () => {
+      const found = findHits(root, query);
+      setHits(found);
+      setHitIndex(0);
+      paintHits(found, 0);
+      if (found.length && firstRun) revealRange(found[0]);
+      firstRun = firstRun && !found.length;
+    };
+    // Views that render later (sheet tabs, chapters, large code) change the DOM: scan again
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(scan, 120);
+    });
+    observer.observe(root, { childList: true, subtree: true, characterData: true });
+    const raf = requestAnimationFrame(() => requestAnimationFrame(scan));
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [data, raw, editing, query]);
+
+  useEffect(() => () => clearHits(), []);
+
+  const goHit = (step: number) => {
+    if (!hits.length) return;
+    const next = (hitIndex + step + hits.length) % hits.length;
+    setHitIndex(next);
+    paintHits(hits, next);
+    revealRange(hits[next]);
+  };
+
+  useEffect(() => {
+    if (editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F3') {
+        e.preventDefault();
+        goHit(e.shiftKey ? -1 : 1);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+
   if (!item) return null;
 
   const kind = fileKind(item.category, item.extension);
@@ -212,13 +273,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'image':
         return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
       case 'pdf':
-        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} /> : null;
+        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} query={query} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
       case 'document':
         return <DocumentPreview html={current.document_html || ''} />;
       case 'workbook':
-        return <WorkbookPreview sheets={current.sheets || []} />;
+        return <WorkbookPreview sheets={current.sheets || []} query={query} />;
       case 'slides':
         return <SlidesPreview slides={current.slides || []} />;
       case 'plain':
@@ -265,7 +326,20 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
               ))}
             </span>
           </div>
-          <span className="hidden sm:inline font-mono text-[11px] text-fg-3 mr-1">
+          {hits.length > 0 && !editing && (
+            <span className="flex items-center h-7 rounded-lg text-[11.5px] text-fg-2" style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }} title="Search hits in this file (F3, Shift+F3)">
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title="Previous hit (Shift+F3)">
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <span className="font-mono px-1 tabular-nums" style={{ color: '#facc15' }}>
+                {hitIndex + 1}/{hits.length}
+              </span>
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(1)} title="Next hit (F3)">
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          )}
+          <span className="hidden sm:inline font-mono text-[11px] text-fg-3 mr-1" title="File position in the results">
             {position.index + 1} / {position.total}
           </span>
           {!editing && current?.preview_type === 'markdown' && (
@@ -305,7 +379,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           </button>
         </div>
 
-        <div className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
+        <div ref={bodyRef} className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
           {loading && current && <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden loading-line z-10" />}
           {body()}
         </div>

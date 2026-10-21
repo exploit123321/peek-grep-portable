@@ -18,8 +18,14 @@ export const DocumentPreview: React.FC<{ html: string }> = ({ html }) => {
 };
 
 // Excel: one tab per sheet, a grid with column letters and row numbers like Excel
-export const WorkbookPreview: React.FC<{ sheets: SheetData[] }> = ({ sheets }) => {
-  const [index, setIndex] = useState(0);
+export const WorkbookPreview: React.FC<{ sheets: SheetData[]; query?: string }> = ({ sheets, query }) => {
+  // Start on the first sheet that has the searched text
+  const [index, setIndex] = useState(() => {
+    const q = (query ?? '').trim().toLowerCase();
+    if (!q) return 0;
+    const i = sheets.findIndex(s => s.name.toLowerCase().includes(q) || s.rows.some(r => r.some(c => c.toLowerCase().includes(q))));
+    return Math.max(0, i);
+  });
   const [filter, setFilter] = useState('');
   const sheet = sheets[Math.min(index, sheets.length - 1)];
   const rows = useMemo(() => {

@@ -280,3 +280,13 @@ pre[class*="language-"] {
 .markdown-body blockquote { border-left: 3px solid var(--accent); padding-left: 0.8rem; color: var(--text-2); margin: 0.8rem 0; }
 .markdown-body img { max-width: 100%; border-radius: 6px; }
 .markdown-body input[type="checkbox"] { accent-color: var(--accent); margin-right: 0.4rem; }
+
+/* Search hits in Quick Look (CSS Custom Highlight API) */
+::highlight(pg-hit) {
+  background-color: rgba(250, 204, 21, 0.26);
+  color: inherit;
+}
+::highlight(pg-hit-current) {
+  background-color: rgba(250, 204, 21, 0.85);
+  color: #111;
+}

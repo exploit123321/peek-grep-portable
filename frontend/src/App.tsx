@@ -465,6 +465,7 @@ function Workspace() {
           onOpen={openItem}
           onReveal={revealItem}
           onCopyPath={copyPath}
+          query={query}
         />
       )}
 
