@@ -1,17 +1,21 @@
-"""Build Peek & Grep Portable.
+r"""Build Peek & Grep Portable.
 
 Output (in release\\):
     PeekGrep\\               the portable folder: runtime\\, app\\, PeekGrep.exe (launcher), README.txt
     PeekGrep.exe            one self-extracting file: on first start it unpacks PeekGrep\\ next to itself
 
 Steps:
-    1. Trace which site-packages the app imports (in the development venv).
-    2. Copy a lean Python runtime (no tkinter, no pip) and only the needed packages.
+    1. Get the Python runtime:
+       - without a venv (normal case, build.bat): copy vendor\runtime from the repository;
+       - with backend\venv: trace which packages the app imports, copy a lean runtime
+         (no tkinter, no pip) and only those packages. --update-vendor then refreshes vendor\runtime.
+    2. Build the UI with npm if frontend\node_modules exists, else use the committed frontend\dist.
     3. Copy the app (desktop_app.py, backend\\app, frontend\\dist) and precompile it.
     4. Compile the C# launcher twice: plain, and with the zipped folder as an embedded resource.
 
 Usage:
-    python build_portable.py [--venv <path to venv>] [--skip-frontend]
+    build.bat                                   (uses vendor\runtime\python.exe, nothing to install)
+    python build_portable.py [--venv <path>] [--skip-frontend] [--update-vendor]
 """
 
 import argparse
@@ -29,7 +33,8 @@ HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
 RELEASE = PROJECT / "release"
 CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
-DEFAULT_VENV = PROJECT / "backend" / "venv"  # made by the setup steps in README.md
+DEFAULT_VENV = PROJECT / "backend" / "venv"  # optional, only to update packages
+VENDOR_RUNTIME = PROJECT / "vendor" / "runtime"  # committed runtime: builds need no pip and no Python install
 
 # Always copied, even when the trace does not see them (lazy imports, shims)
 EXTRA_PACKAGES = {"clr.py", "colorama", "multipart"}
@@ -66,8 +71,29 @@ def run(cmd, **kw) -> str:
 
 
 def build_frontend() -> None:
-    log("Building frontend (npm run build)")
-    run("npm run build", cwd=PROJECT / "frontend", shell=True)
+    """Build the UI with npm when it is available; else use the committed frontend/dist."""
+    frontend = PROJECT / "frontend"
+    if (frontend / "node_modules").is_dir() and shutil.which("npm"):
+        log("Building frontend (npm run build)")
+        run("npm run build", cwd=frontend, shell=True)
+    elif (frontend / "dist" / "index.html").exists():
+        log("No npm or node_modules: using the committed frontend/dist")
+    else:
+        raise SystemExit("frontend/dist is missing and npm is not available")
+
+
+def copy_vendor_runtime(target: Path) -> None:
+    log(f"Copying the committed runtime from {VENDOR_RUNTIME}")
+    if not (VENDOR_RUNTIME / "pythonw.exe").exists():
+        raise SystemExit("vendor/runtime is missing. Get the complete repository again.")
+    shutil.copytree(VENDOR_RUNTIME, target, ignore=shutil.ignore_patterns("__pycache__"))
+
+
+def update_vendor(runtime: Path) -> None:
+    log("Updating vendor/runtime from this build")
+    if VENDOR_RUNTIME.exists():
+        shutil.rmtree(VENDOR_RUNTIME)
+    shutil.copytree(runtime, VENDOR_RUNTIME, ignore=shutil.ignore_patterns("__pycache__"))
 
 
 def copy_runtime(home: Path, venv: Path, target: Path) -> None:
@@ -205,7 +231,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--venv", type=Path, default=DEFAULT_VENV)
     parser.add_argument("--skip-frontend", action="store_true")
+    parser.add_argument("--update-vendor", action="store_true", help="copy the new runtime into vendor/runtime")
     args = parser.parse_args()
+    use_venv = (args.venv / "Scripts" / "python.exe").exists()
 
     started = time.time()
     if not args.skip_frontend:
@@ -216,7 +244,12 @@ def main() -> None:
         shutil.rmtree(RELEASE)
     folder.mkdir(parents=True)
 
-    copy_runtime(base_python_home(args.venv), args.venv, folder / "runtime")
+    if use_venv:
+        copy_runtime(base_python_home(args.venv), args.venv, folder / "runtime")
+        if args.update_vendor:
+            update_vendor(folder / "runtime")
+    else:
+        copy_vendor_runtime(folder / "runtime")
     copy_app(folder / "app")
     shutil.copy2(HERE / "README.txt", folder / "README.txt")
     precompile(folder)

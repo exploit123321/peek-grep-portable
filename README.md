@@ -11,26 +11,24 @@ the working folders that the user selects on the first start.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
 - **New UI** (React, Tailwind, no new packages). See the motion references below.
 
-## Setup on a new PC (one time)
+## Build (nothing to install)
 
-You need Windows 10 or 11 (64-bit), Git, Node.js 20 or later, and Python 3.12 or later from python.org (64-bit).
-Do not use the Microsoft Store Python: the build copies the Python installation into the portable folder.
+1. Get the repository (`git clone`, or "Code > Download ZIP" on GitHub).
+2. Double-click `build.bat`.
+3. The result is `release\PeekGrep.exe`.
 
-```bash
-git clone https://github.com/exploit123321/peek-grep-portable.git
-cd peek-grep-portable
-py -3 -m venv backend\venv
-backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-cd frontend && npm ci && cd ..
-```
+The repository holds everything that the build needs:
 
-## Build
+- `vendor\runtime\`: the Python 3.14 runtime with all app packages (no pip needed).
+- `frontend\dist\`: the built UI (no npm needed).
+- The launcher is compiled with the C# compiler that is part of Windows (.NET Framework 4).
 
-```bash
-backend\venv\Scripts\python.exe portable\build_portable.py
-```
+To change the program, edit the `.py` files in `backend\app\` or `desktop_app.py`, then run `build.bat` again.
 
-The build copies the Python version that made `backend\venv` into the portable folder. The launcher is compiled with the C# compiler that is part of Windows (.NET Framework 4).
+## Optional: change the UI or the packages
+
+- **UI** (`frontend\src`): needs Node.js. Run `npm ci` once in `frontend\`. After that, `build.bat` also rebuilds `frontend\dist`. Commit the new `dist`.
+- **Packages:** needs Python from python.org and pip. Create `backend\venv`, install `backend\requirements.txt`, then run `backend\venv\Scripts\python.exe portable\build_portable.py --update-vendor` to refresh `vendor\runtime`.
 
 Output in `release\`:
 

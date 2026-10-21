@@ -1,6 +1,6 @@
 # Build output (rebuild with portable\build_portable.py)
 release/
-frontend/dist/
+# frontend/dist is committed, so builds work without npm
 portable/launcher/*.exe
 portable/*.zip
 portable/*.version
@@ -11,7 +11,7 @@ backend/venv/
 .venv/
 
 # App data, caches, logs
-data/
+/data/
 __pycache__/
 *.pyc
 .pytest_cache/

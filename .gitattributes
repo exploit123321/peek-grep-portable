@@ -3,3 +3,7 @@
 *.epub binary
 *.png binary
 *.ico binary
+*.dll binary
+*.pyd binary
+*.exe binary
+*.zip binary
