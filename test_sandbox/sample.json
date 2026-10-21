@@ -1,0 +1,19 @@
+{
+  "system": {
+    "name": "Peek & Grep Workstation",
+    "version": "1.0.0",
+    "environment": "production"
+  },
+  "search": {
+    "default_mode": "all",
+    "debounce_ms": 150,
+    "max_results": 50,
+    "highlight_tag": "mark"
+  },
+  "features": {
+    "spacebar_quick_look": true,
+    "fts5_enabled": true,
+    "watchdog_realtime": true,
+    "supported_languages": ["python", "typescript", "json", "markdown", "sql", "bash"]
+  }
+}

@@ -1,0 +1,19 @@
+PEEK & GREP ENGINEERING NOTES
+===============================
+Date: September 5, 2026
+Sprint: Fast Desktop Search and Quick Look UI
+
+1. Search Performance Goals:
+- Indexing must handle both small text files and multi-megabyte source code repositories.
+- FTS5 virtual table must escape user query tokens such that special punctuation (+, -, *, :, ^) does not cause syntax error exceptions.
+- WAL (Write-Ahead Logging) pragma enabled in SQLite to ensure concurrent readers don't block writer updates.
+
+2. Architecture Review Highlights:
+- Quick Look modal must pop up immediately upon Spacebar press when an item is selected in ResultsList.
+- If the search input is focused, typing a space character must NOT trigger the Quick Look modal; it should input a space into the query.
+- When Quick Look modal is visible, pressing Spacebar or Escape must close it.
+- Enter key executes native OS open via os.startfile on Windows.
+
+3. Next Milestones:
+- Release v1.0 desktop bundle with headless Playwright validation.
+- Add live Watchdog listener test for realtime file edits in test_sandbox directory.

@@ -1,0 +1,21 @@
+# Build output (rebuild with portable\build_portable.py)
+release/
+frontend/dist/
+portable/launcher/*.exe
+portable/*.zip
+portable/*.version
+
+# Dependencies
+frontend/node_modules/
+backend/venv/
+.venv/
+
+# App data, caches, logs
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+*.db
+*.db-wal
+*.db-shm

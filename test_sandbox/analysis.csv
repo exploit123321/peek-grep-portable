@@ -1,0 +1,13 @@
+id,name,department,role,salary,performance,status
+101,Elena Rostova,Engineering,Principal Systems Architect,185000,4.9,Active
+102,Marcus Vance,Data Platform,Senior Data Engineer,142000,4.7,Active
+103,Aria Chen,Product Design,Lead UX Specialist,138000,4.8,Active
+104,Devon Brooks,Infrastructure,DevOps Engineer,125000,4.5,Active
+105,Sophia Al-Mansoor,Security,SecOps Analyst,132000,4.6,Active
+106,Tariq Thorne,Engineering,Frontend Engineer,118000,4.4,Active
+107,Zoe Krawczyk,Machine Learning,Research Scientist,165000,4.9,Active
+108,Liam O'Connor,QA & Testing,Test Automation Lead,112000,4.3,Active
+109,Amara Diallo,Infrastructure,Site Reliability Engineer,140000,4.8,Active
+110,Noah Lindqvist,Product,Technical Product Manager,150000,4.6,Active
+111,Isabella Santos,Engineering,Backend Developer,122000,4.5,Active
+112,Kenji Takahashi,Data Platform,Analytics Engineer,128000,4.7,Active
