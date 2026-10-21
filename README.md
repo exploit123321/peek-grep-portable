@@ -11,18 +11,33 @@ the working folders that the user selects on the first start.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
 - **New UI** (React, Tailwind, no new packages). See the motion references below.
 
+## Setup on a new PC (one time)
+
+You need Windows 10 or 11 (64-bit), Git, Node.js 20 or later, and Python 3.12 or later from python.org (64-bit).
+Do not use the Microsoft Store Python: the build copies the Python installation into the portable folder.
+
+```bash
+git clone https://github.com/exploit123321/peek-grep-portable.git
+cd peek-grep-portable
+py -3 -m venv backend\venv
+backend\venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+cd frontend && npm ci && cd ..
+```
+
 ## Build
 
 ```bash
-"D:\New folder\peek-grep\backend\venv\Scripts\python.exe" portable\build_portable.py
+backend\venv\Scripts\python.exe portable\build_portable.py
 ```
+
+The build copies the Python version that made `backend\venv` into the portable folder. The launcher is compiled with the C# compiler that is part of Windows (.NET Framework 4).
 
 Output in `release\`:
 
 - `PeekGrep.exe` is one self-extracting file (about 39 MB). On the first start it unpacks `PeekGrep\` next to itself. Later starts launch at once. A newer exe replaces `runtime\` and `app\` and keeps `data\`.
 - `PeekGrep\` is the unpacked portable folder (about 104 MB), with a plain launcher.
 
-Tests (40): in `backend\`, run `"D:\New folder\peek-grep\backend\venv\Scripts\python.exe" -m pytest -q`.
+Tests (41): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 
 ## Motion references (from the motion reference matrix)
 

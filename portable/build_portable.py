@@ -29,7 +29,7 @@ HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
 RELEASE = PROJECT / "release"
 CSC = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
-DEFAULT_VENV = Path(r"D:\New folder\peek-grep\backend\venv")
+DEFAULT_VENV = PROJECT / "backend" / "venv"  # made by the setup steps in README.md
 
 # Always copied, even when the trace does not see them (lazy imports, shims)
 EXTRA_PACKAGES = {"clr.py", "colorama", "multipart"}
