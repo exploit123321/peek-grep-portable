@@ -80,7 +80,18 @@ class SettingsStore:
             data.setdefault("folders", [])
             data.setdefault("hotkey", DEFAULT_HOTKEY)
             self._data = data
+            self._apply_skip_folders()
             self._resolve_drive_letter()
+
+    def _apply_skip_folders(self) -> None:
+        """Optional "skip_folders" in settings.json replaces the default skip list."""
+        from app.config import DEFAULT_SKIP_DIR_NAMES, SKIP_DIR_NAMES
+        custom = self._data.get("skip_folders")
+        SKIP_DIR_NAMES.clear()
+        if isinstance(custom, list):
+            SKIP_DIR_NAMES.update(str(n).strip().lower() for n in custom if str(n).strip())
+        else:
+            SKIP_DIR_NAMES.update(DEFAULT_SKIP_DIR_NAMES)
 
     def save(self) -> None:
         with self._lock:
@@ -115,6 +126,11 @@ class SettingsStore:
     @property
     def hotkey(self) -> str:
         return str(self._data.get("hotkey") or DEFAULT_HOTKEY)
+
+    @property
+    def release_window_on_hide(self) -> bool:
+        """Close the WebView while the app is in the tray (saves about 190 MB; reopening takes about 1 s)."""
+        return bool(self._data.get("release_window_on_hide", True))
 
     def folders(self) -> List[str]:
         with self._lock:

@@ -117,6 +117,11 @@ tray_icon = None
 server_port = 0
 is_maximized_state = False
 last_window_size = DEFAULT_SIZE
+last_position = None            # (x, y) of the last window, reused when the window opens again
+show_requested = threading.Event()
+quitting = False
+pending_js: list = []           # scripts for the next page load (for example "open the folders panel")
+target_url = ""
 _mutex_handle = None
 
 
@@ -229,8 +234,11 @@ def focus_window_native():
 
 
 def show_window():
-    """Show the window and focus the search input."""
+    """Show the window and focus the search input. Opens a new window if it was released."""
     global window_visible
+    if main_window is None:
+        show_requested.set()  # the main loop creates the window
+        return
     if main_window:
         try:
             main_window.show()
@@ -242,9 +250,37 @@ def show_window():
             print(f"[Desktop App] Error showing window: {e}")
 
 
+def _page_is_editing() -> bool:
+    """True when Quick Look has an open editor (the window must then only hide, not close)."""
+    try:
+        return bool(main_window.evaluate_js("document.body.dataset.editing === '1'"))
+    except Exception:
+        return True
+
+
+def _remember_geometry() -> None:
+    global last_window_size, last_position
+    try:
+        if not is_maximized_state:
+            last_window_size = (main_window.width, main_window.height)
+        last_position = (main_window.x, main_window.y)
+    except Exception:
+        pass
+
+
 def hide_window():
-    """Hide the window to the tray."""
+    """Hide the window to the tray. By default the WebView closes to free its memory."""
     global window_visible
+    if main_window is None:
+        return
+    window_visible = False
+    if settings_store.release_window_on_hide and not _page_is_editing():
+        _remember_geometry()
+        try:
+            main_window.destroy()  # webview.start() returns; the main loop waits for the next show
+        except Exception as e:
+            print(f"[Desktop App] Error closing window: {e}")
+        return
     if main_window:
         try:
             main_window.hide()
@@ -263,6 +299,10 @@ def toggle_window():
 
 
 def open_folders_panel():
+    if main_window is None:
+        pending_js.append("window.dispatchEvent(new CustomEvent('peekgrep:open-folders'))")
+        show_window()
+        return
     show_window()
     if main_window:
         try:
@@ -297,6 +337,9 @@ def confirm_and_reindex(icon=None, item=None):
 
 def exit_application(icon=None, item=None):
     """Stop the tray icon, the window, and the background workers."""
+    global quitting
+    quitting = True
+    show_requested.set()
     print("[Desktop App] Exiting Peek & Grep...")
     try:
         index_manager.stop()
@@ -397,10 +440,43 @@ def setup_global_hotkey():
 def on_window_shown():
     global window_visible
     window_visible = True
+    focus_window_native()
+
+
+def on_window_loaded():
+    while pending_js:
+        try:
+            main_window.evaluate_js(pending_js.pop(0))
+        except Exception:
+            pass
+
+
+def create_main_window(hidden: bool = False) -> None:
+    global main_window
+    kwargs = {}
+    if last_position:
+        kwargs = {"x": last_position[0], "y": last_position[1]}
+    main_window = webview.create_window(
+        title=APP_TITLE,
+        url=target_url,
+        width=last_window_size[0],
+        height=last_window_size[1],
+        min_size=MIN_SIZE,
+        resizable=True,
+        frameless=True,
+        easy_drag=False,
+        on_top=False,
+        hidden=hidden,
+        background_color="#0B0B0E",
+        js_api=DesktopApi(),
+        **kwargs,
+    )
+    main_window.events.shown += on_window_shown
+    main_window.events.loaded += on_window_loaded
 
 
 def main():
-    global main_window, server_port
+    global main_window, server_port, target_url
 
     print("==================================================")
     print(f"  PEEK & GREP PORTABLE {APP_VERSION}")
@@ -437,34 +513,34 @@ def main():
     dist_index = CURRENT_DIR / "frontend" / "dist" / "index.html"
     target_url = f"http://127.0.0.1:{server_port}/" if dist_index.exists() else "http://127.0.0.1:5173/"
 
-    start_hidden = "--hidden" in sys.argv and settings_store.setup_done
-    main_window = webview.create_window(
-        title=APP_TITLE,
-        url=target_url,
-        width=DEFAULT_SIZE[0],
-        height=DEFAULT_SIZE[1],
-        min_size=MIN_SIZE,
-        resizable=True,
-        frameless=True,
-        easy_drag=False,
-        on_top=False,
-        hidden=start_hidden,
-        background_color="#0B0B0E",
-        js_api=DesktopApi(),
-    )
-    main_window.events.shown += on_window_shown
-
     # WebView2 reads this variable when it starts; values that the user set stay at the end
     extra = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
     os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"{WEBVIEW2_ARGS} {extra}".strip()
 
-    print("[Desktop App] Opening WebView2 window...")
-    webview.start(
-        gui="edgechromium",
-        debug=False,
-        private_mode=False,
-        storage_path=str(DATA_DIR / "webview"),
-    )
+    # One window at a time. When it closes to the tray, webview.start() returns and the loop
+    # waits; Alt+Space or the tray icon opens a new window.
+    wait_first = "--hidden" in sys.argv and settings_store.setup_done
+    while not quitting:
+        if wait_first:
+            show_requested.wait()
+            show_requested.clear()
+            wait_first = False
+            if quitting:
+                break
+        print("[Desktop App] Opening WebView2 window...")
+        create_main_window()
+        webview.start(
+            gui="edgechromium",
+            debug=False,
+            private_mode=False,
+            storage_path=str(DATA_DIR / "webview"),
+        )
+        main_window = None
+        if quitting:
+            break
+        print("[Desktop App] Window closed to the tray (WebView released).")
+        show_requested.clear()
+        wait_first = True
     exit_application()
 
 

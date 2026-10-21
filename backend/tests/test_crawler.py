@@ -16,7 +16,11 @@ def test_is_protected_directory():
     assert is_protected_directory(r"C:\Windows\System32", "System32") is True
     assert is_protected_directory(r"C:\System Volume Information", "System Volume Information") is True
     assert is_protected_directory(r"C:\$Recycle.Bin", "$Recycle.Bin") is True
-    assert is_protected_directory(r"C:\Users\Alice\AppData\Local\Temp", "Temp") is True
+    assert is_protected_directory(r"C:\Users\Alice\AppData\Local\Temp", "Temp") is True  # path pattern
+    # Folder names that people use for their own documents are scanned
+    assert is_protected_directory(r"D:\work\Temp", "Temp") is False
+    assert is_protected_directory(r"D:\work\Build", "Build") is False
+    assert is_protected_directory(r"D:\work\dist", "dist") is False
     assert is_protected_directory(r"C:\Users\Alice\AppData", "AppData") is True
     assert is_protected_directory(r"C:\Users\Alice\.cache", ".cache") is True
     assert is_protected_directory(r"D:\projects\.git", ".git") is True
@@ -29,8 +33,8 @@ def test_system_ignore_dirs_contains_all_noisy_folders():
     from app.config import SYSTEM_IGNORE_DIRS
     expected = {
         "windows", "programdata", "$recycle.bin", "system volume information",
-        "appdata", "temp", ".cache",
-        "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"
+        "appdata", ".cache",
+        "node_modules", ".git", ".venv", "venv", "__pycache__",
     }
     assert expected.issubset(SYSTEM_IGNORE_DIRS)
     for folder in expected:

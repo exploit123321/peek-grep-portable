@@ -36,36 +36,36 @@ DB_PATH: str = os.environ.get("PEEK_GREP_DB_PATH", str(DATA_DIR / "index.db"))
 SETTINGS_PATH: str = os.environ.get("PEEK_GREP_SETTINGS", str(DATA_DIR / "settings.json"))
 LOG_PATH: str = str(DATA_DIR / "app.log")
 
-# Noisy system, cache, and development ignore directories
+# Folder names that are never scanned: Windows system folders, program data, and tool caches.
+# Names that people also use for their own documents (build, dist, temp, coverage, recovery)
+# are not in this list. Folders that start with "$" are always skipped.
+# settings.json can replace the list with "skip_folders": ["name", ...].
 SYSTEM_IGNORE_DIRS: Set[str] = {
     "windows",
     "programdata",
     "$recycle.bin",
     "system volume information",
     "appdata",
-    "temp",
     ".cache",
     "node_modules",
     ".git",
     ".venv",
     "venv",
     "__pycache__",
-    "dist",
-    "build",
 }
 
-# Windows protected system folders and bloat directories to strictly skip
-SKIP_DIR_NAMES: Set[str] = SYSTEM_IGNORE_DIRS | {
+DEFAULT_SKIP_DIR_NAMES: Set[str] = SYSTEM_IGNORE_DIRS | {
     "$winreagent",
-    "recovery",
     ".idea",
     ".vscode",
     ".pytest_cache",
     ".system_generated",
-    "coverage",
     ".next",
     ".turbo",
 }
+
+# The active list (the same set object everywhere, so a settings change applies at once)
+SKIP_DIR_NAMES: Set[str] = set(DEFAULT_SKIP_DIR_NAMES)
 
 # Alias for backwards compatibility
 IGNORE_DIRS: Set[str] = SKIP_DIR_NAMES

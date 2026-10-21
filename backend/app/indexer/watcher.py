@@ -76,7 +76,7 @@ class DebouncedChangeHandler(FileSystemEventHandler):
         parts = relative.split(os.sep)
         for part in parts[:-1] if root else parts:
             clean_part = part.strip()
-            if clean_part in SYSTEM_IGNORE_DIRS or clean_part in SKIP_DIR_NAMES:
+            if clean_part in SKIP_DIR_NAMES:
                 return True
             if clean_part.startswith("$"):
                 return True

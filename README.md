@@ -23,6 +23,16 @@ the working folders that the user selects on the first start.
 
 Every save copies the old version to `data\backups` (last 200), refuses a file that changed on disk since you opened it, and fails safely when the file is open in another program. Ctrl+S saves, Esc leaves edit mode.
 
+## Settings (`data\settings.json`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `hotkey` | `"alt+space"` | Global key that shows or hides the window |
+| `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
+| `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
+
+Quit the app before you edit this file.
+
 ## Build (nothing to install)
 
 1. Get the repository (`git clone`, or "Code > Download ZIP" on GitHub).
