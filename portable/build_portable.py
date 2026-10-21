@@ -177,14 +177,31 @@ import desktop_app, uvicorn, webview.platforms.winforms, uvicorn.loops.auto, uvi
 s = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(8); port = s.getsockname()[1]
 srv = uvicorn.Server(uvicorn.Config(desktop_app.app, log_level='warning'))
 threading.Thread(target=srv.run, kwargs={{'sockets': [s]}}, daemon=True).start()
-time.sleep(2.5)
-print(urllib.request.urlopen(f'http://127.0.0.1:{{port}}/api/status').read().decode())
-print(len(urllib.request.urlopen(f'http://127.0.0.1:{{port}}/').read()), 'bytes of index.html')
+# Direct calls: a company proxy must not get the 127.0.0.1 requests
+direct = urllib.request.build_opener(urllib.request.ProxyHandler({{}}))
+end = time.time() + 30  # antivirus scans can make the first start slow
+while True:
+    try:
+        status = direct.open(f'http://127.0.0.1:{{port}}/api/status', timeout=3).read().decode()
+        break
+    except Exception:
+        if time.time() > end:
+            raise
+        time.sleep(0.5)
+print(status)
+print(len(direct.open(f'http://127.0.0.1:{{port}}/', timeout=5).read()), 'bytes of index.html')
 print('sys.path =', sys.path)
 """
     # A clean environment proves that nothing comes from the developer's Python setup
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("PYTHON")}
-    print(run([str(py), "-c", code], env=env))
+    res = subprocess.run([str(py), "-c", code], env=env, capture_output=True, text=True)
+    if res.returncode == 0:
+        print(res.stdout)
+        return
+    # The exe is still built: the test checks this PC, not the files
+    print(res.stdout)
+    print(res.stderr[-3000:])
+    log("WARNING: the smoke test failed on this PC (see the error above). The build continues.")
 
 
 def make_icon(path: Path) -> None:

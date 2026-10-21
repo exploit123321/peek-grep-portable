@@ -31,6 +31,10 @@ from app.config import APP_VERSION, DATA_DIR, LOG_PATH  # noqa: E402
 APP_TITLE = "Peek & Grep"
 INSTANCE_FILE = DATA_DIR / "instance.json"
 
+# Calls to our own server go direct. A company proxy (environment or Windows settings)
+# would otherwise get the 127.0.0.1 requests and refuse them.
+LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 # The window only loads pages from 127.0.0.1. These switches stop WebView2's own background
 # calls: Edge configuration downloads, network error reports, and the WPAD proxy lookup.
 # ElasticOverscroll is the switch that pywebview sets itself (one --disable-features list only).
@@ -131,7 +135,7 @@ def signal_running_instance() -> bool:
         info = json.loads(INSTANCE_FILE.read_text(encoding="utf-8"))
         req = urllib.request.Request(f"http://127.0.0.1:{info['port']}/api/actions/show-window",
                                      data=b"", method="POST")
-        urllib.request.urlopen(req, timeout=2).read()
+        LOCAL_HTTP.open(req, timeout=2).read()
         return True
     except Exception as e:
         print(f"[Desktop App] Could not reach the running instance: {e}")
@@ -155,12 +159,12 @@ def start_backend_server(sock: socket.socket) -> None:
     server.run(sockets=[sock])
 
 
-def wait_for_backend(port: int, timeout: float = 15.0) -> bool:
+def wait_for_backend(port: int, timeout: float = 45.0) -> bool:
     """Poll backend until operational or timeout."""
     start = time.time()
     while time.time() - start < timeout:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1.0) as res:
+            with LOCAL_HTTP.open(f"http://127.0.0.1:{port}/api/status", timeout=1.0) as res:
                 if res.status == 200:
                     return True
         except Exception:
