@@ -18,6 +18,7 @@ from app.indexer.parsers import (
     is_text_file,
     parse_csv_content,
 )
+from app.editing import edit_kind
 from app.indexer.office import OFFICE_EXTENSIONS, extract_office, preview_kind
 from app.schemas import EpubChapter, EpubPreviewMeta, ImagePreviewMeta, PreviewResponse, TablePreviewData
 from app.state import require_allowed
@@ -94,6 +95,7 @@ async def get_preview(
             )
 
         return PreviewResponse(
+            editable=edit_kind(ext),
             path=norm_path,
             filename=filename,
             extension=ext,
@@ -110,6 +112,7 @@ async def get_preview(
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Cannot read this Office file: {e}")
         return PreviewResponse(
+            editable=edit_kind(ext),
             path=norm_path,
             filename=filename,
             extension=ext,
@@ -130,6 +133,7 @@ async def get_preview(
             sep = chosen if chosen is not None else detect_delimiter(content, default=default)
             cols, rows, total_rows = parse_csv_content(content, delimiter=sep)
             return PreviewResponse(
+                editable=edit_kind(ext),
                 path=norm_path,
                 filename=filename,
                 extension=ext,
@@ -155,6 +159,7 @@ async def get_preview(
         try:
             content, truncated = read_text_head(norm_path)
             return PreviewResponse(
+                editable=edit_kind(ext),
                 path=norm_path,
                 filename=filename,
                 extension=ext,
@@ -174,6 +179,7 @@ async def get_preview(
             content, truncated = read_text_head(norm_path)
             lang = LANGUAGE_MAP.get(ext, "plain")
             return PreviewResponse(
+                editable=edit_kind(ext),
                 path=norm_path,
                 filename=filename,
                 extension=ext,
@@ -193,6 +199,7 @@ async def get_preview(
         try:
             content, truncated = read_text_head(norm_path)
             return PreviewResponse(
+                editable=edit_kind(ext),
                 path=norm_path,
                 filename=filename,
                 extension=ext,
@@ -209,6 +216,7 @@ async def get_preview(
 
     if ext == ".pdf":
         return PreviewResponse(
+            editable=edit_kind(ext),
             path=norm_path,
             filename=filename,
             extension=ext,
@@ -234,6 +242,7 @@ async def get_preview(
             total_chapters=len(chapters_data),
         )
         return PreviewResponse(
+            editable=edit_kind(ext),
             path=norm_path,
             filename=filename,
             extension=ext,

@@ -11,6 +11,18 @@ the working folders that the user selects on the first start.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
 - **New UI** (React, Tailwind, no new packages). See the motion references below.
 
+## Editing (Quick Look > Edit)
+
+| Format | What you can edit |
+|---|---|
+| Text, code, Markdown, `.ini`, `.log` | All text. Encoding, BOM, and line ends are kept. |
+| `.csv` `.tsv` | Cells, add and remove rows. The separator and encoding are kept. |
+| `.xlsx` `.xlsm` | Cell values (first 300 rows and 60 columns). Formatting, other sheets, and macros stay. Formula cells are locked. |
+| `.docx` | Paragraph and table-cell text. Unchanged paragraphs stay exactly as they are. Paragraphs with pictures, links, fields, or tracked changes are locked. |
+| `.doc` `.xls` `.ppt` | Not editable (use Open). |
+
+Every save copies the old version to `data\backups` (last 200), refuses a file that changed on disk since you opened it, and fails safely when the file is open in another program. Ctrl+S saves, Esc leaves edit mode.
+
 ## Build (nothing to install)
 
 1. Get the repository (`git clone`, or "Code > Download ZIP" on GitHub).

@@ -200,6 +200,7 @@ function Workspace() {
   useEffect(() => {
     if (view !== 'search' || foldersOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      if (document.body.dataset.editing === '1') return; // the Quick Look editor has the keyboard
       const active = document.activeElement as HTMLElement | null;
       const inSearch = active === inputRef.current;
       const inOtherField = !inSearch && !!active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');

@@ -134,6 +134,9 @@ export const api = {
     request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),
   reveal: (path: string) => post<{ message: string }>('/api/actions/reveal', { path }),
+  editLoad: (path: string) => request<EditModel>(`/api/edit?path=${encodeURIComponent(path)}`),
+  editSave: (path: string, mtime_ns: string, payload: Record<string, unknown>) =>
+    post<{ success: boolean; mtime_ns: string; backup: string }>('/api/edit/save', { path, mtime_ns, payload }),
 
   async pickFolders(): Promise<string[] | null> {
     const d = desktop();
@@ -197,6 +200,7 @@ export interface PreviewPayload {
     chapters: { title?: string | null; content: string }[];
     total_chapters: number;
   };
+  editable?: EditKind | null;
   document_html?: string | null;
   sheets?: SheetData[] | null;
   slides?: SlideData[] | null;
@@ -217,4 +221,18 @@ export interface SlideData {
   title: string;
   paragraphs: { text: string; level: number }[];
   images: number;
+}
+
+export type EditKind = 'text' | 'csv' | 'workbook' | 'document';
+
+export interface EditModel {
+  kind: EditKind;
+  mtime_ns: string;
+  text?: string;
+  encoding?: string;
+  newline?: string;
+  rows?: string[][];
+  delimiter?: Exclude<Delimiter, 'auto'>;
+  sheets?: (SheetData & { formulas: [number, number][] })[];
+  paragraphs?: { id: number; text: string; style: string; table: boolean; locked: boolean }[];
 }

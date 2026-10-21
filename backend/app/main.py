@@ -10,7 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import APP_VERSION, DATA_DIR, DB_PATH, PROJECT_ROOT
 from app.indexer.db import count_files, count_fts_indexed
-from app.routers import actions, folders, preview, search
+from app.routers import actions, edit, folders, preview, search
 from app.schemas import ActionResponse, ResizeWindowRequest, StatusResponse, WindowSizeResponse
 from app.state import desktop_hooks, index_manager, settings_store
 
@@ -70,6 +70,7 @@ app.include_router(search.router)
 app.include_router(preview.router)
 app.include_router(actions.router)
 app.include_router(folders.router)
+app.include_router(edit.router)
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:

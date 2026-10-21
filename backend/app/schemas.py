@@ -84,6 +84,7 @@ class PreviewResponse(BaseModel):
     slides: Optional[List[SlideData]] = None
     raw_url: Optional[str] = None
     truncated: bool = False
+    editable: Optional[str] = None  # text, csv, workbook, document (None: not editable)
 
 class ActionRequest(BaseModel):
     path: str

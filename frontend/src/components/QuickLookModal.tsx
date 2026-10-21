@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Code, Copy, Eye, ExternalLink, FolderOpen, X } from 'lucide-react';
-import { api, Delimiter, PreviewPayload, SearchItem } from '../api';
+import { Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, X } from 'lucide-react';
+import { api, Delimiter, EditModel, PreviewPayload, SearchItem } from '../api';
+import { CsvEditor, DocumentEditor, TextEditor, WorkbookEditor } from './editors/Editors';
+import { useToast } from './Toasts';
 import { FileIcon } from './FileIcon';
 import { CodePreview, PlainPreview } from './previews/CodePreview';
 import { MarkdownPreview } from './previews/MarkdownPreview';
@@ -42,6 +44,77 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [raw, setRaw] = useState(false);
   const [delimiter, setDelimiter] = useState<Delimiter>('auto');
+  const [reload, setReload] = useState(0);
+  const [editModel, setEditModel] = useState<EditModel | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const payloadRef = useRef<Record<string, unknown>>({});
+  const toast = useToast();
+  const editing = editModel !== null;
+
+  // While editing, the window's search keys (Space, arrows, Enter, Esc) stay off
+  useEffect(() => {
+    if (editing) document.body.dataset.editing = '1';
+    else delete document.body.dataset.editing;
+    return () => {
+      delete document.body.dataset.editing;
+    };
+  }, [editing]);
+
+  const startEdit = async () => {
+    if (!item) return;
+    try {
+      const model = await api.editLoad(item.path);
+      payloadRef.current = {};
+      setDirty(false);
+      setEditModel(model);
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+
+  const leaveEdit = (force = false) => {
+    if (!force && dirty && !window.confirm('Discard your changes?')) return false;
+    setEditModel(null);
+    setDirty(false);
+    return true;
+  };
+
+  const saveEdit = async () => {
+    if (!item || !editModel || !dirty || saving) return;
+    setSaving(true);
+    try {
+      await api.editSave(item.path, editModel.mtime_ns, payloadRef.current);
+      toast('Saved. The old version is in data\\backups.');
+      setEditModel(null);
+      setDirty(false);
+      setReload(r => r + 1);
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const close = () => {
+    if (editing && !leaveEdit()) return;
+    onClose();
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveEdit();
+      } else if (e.key === 'Escape' && !(e.target as HTMLElement).closest('td')) {
+        e.preventDefault();
+        leaveEdit();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
 
   // Entry: from the row position, scaled down and blurred
   useLayoutEffect(() => {
@@ -86,7 +159,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         setLoading(false);
       });
     return () => ctrl.abort();
-  }, [item?.path, delimiter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [item?.path, delimiter, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!item) return null;
 
@@ -94,7 +167,26 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const crumbs = compactCrumbs(folderCrumbs(item.path, folders), 5);
   const current = data && data.path.toLowerCase() === item.path.toLowerCase() ? data : null;
 
+  const editorProps = {
+    onChange: (payload: Record<string, unknown>, isDirty: boolean) => {
+      payloadRef.current = payload;
+      setDirty(isDirty);
+    },
+  };
+
   const body = () => {
+    if (editModel) {
+      switch (editModel.kind) {
+        case 'text':
+          return <TextEditor model={editModel} {...editorProps} />;
+        case 'csv':
+          return <CsvEditor model={editModel} {...editorProps} />;
+        case 'workbook':
+          return <WorkbookEditor model={editModel} {...editorProps} />;
+        case 'document':
+          return <DocumentEditor model={editModel} {...editorProps} />;
+      }
+    }
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
@@ -149,7 +241,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-5 sm:p-8">
-      <div className="absolute inset-0 fade-up" style={{ background: 'rgba(5,5,8,0.62)', backdropFilter: 'blur(6px)', animationDuration: '260ms' }} onClick={onClose} />
+      <div className="absolute inset-0 fade-up" style={{ background: 'rgba(5,5,8,0.62)', backdropFilter: 'blur(6px)', animationDuration: '260ms' }} onClick={close} />
       <div
         ref={panelRef}
         className="relative flex flex-col w-full max-w-[1100px] h-full max-h-[860px] rounded-2xl overflow-hidden"
@@ -176,11 +268,28 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           <span className="hidden sm:inline font-mono text-[11px] text-fg-3 mr-1">
             {position.index + 1} / {position.total}
           </span>
-          {current?.preview_type === 'markdown' && (
+          {!editing && current?.preview_type === 'markdown' && (
             <button type="button" className="btn !h-7" onClick={() => setRaw(r => !r)} title="Rendered or source">
               {raw ? <Eye className="w-3.5 h-3.5" /> : <Code className="w-3.5 h-3.5" />}
               {raw ? 'Rendered' : 'Source'}
             </button>
+          )}
+          {editing ? (
+            <>
+              <span className={`text-[11.5px] mr-1 ${dirty ? 'text-warn' : 'text-fg-3'}`}>{dirty ? '● Unsaved changes' : 'Editing'}</span>
+              <button type="button" className="btn !h-7" onClick={() => leaveEdit()} title="Stop editing (Esc)">
+                Cancel
+              </button>
+              <button type="button" className="btn-primary !h-7" disabled={!dirty || saving} onClick={saveEdit} title="Save (Ctrl+S)">
+                <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
+              </button>
+            </>
+          ) : (
+            current?.editable && (
+              <button type="button" className="btn !h-7" onClick={startEdit} title="Edit this file">
+                <Pencil className="w-3.5 h-3.5" /> Edit
+              </button>
+            )
           )}
           <button type="button" className="btn !h-7" onClick={() => onCopyPath(item)} title="Copy path (Ctrl+C)">
             <Copy className="w-3.5 h-3.5" /> Copy path
@@ -191,7 +300,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           <button type="button" className="btn-primary !h-7" onClick={() => onOpen(item)} title="Open (Enter)">
             <ExternalLink className="w-3.5 h-3.5" /> Open
           </button>
-          <button type="button" className="icon-btn ml-1" onClick={onClose} title="Close (Space or Esc)">
+          <button type="button" className="icon-btn ml-1" onClick={close} title="Close (Space or Esc)">
             <X className="w-4 h-4" />
           </button>
         </div>
