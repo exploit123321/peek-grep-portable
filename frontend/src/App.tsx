@@ -67,7 +67,19 @@ function Workspace() {
     });
   }, [loadDetails]);
 
-  // Poll indexer status: fast while work runs, slow when idle
+  // Poll indexer status: fast while work runs, slow when idle, very slow while hidden in the tray
+  const hiddenRef = useRef(false);
+  useEffect(() => {
+    const onHidden = () => { hiddenRef.current = true; };
+    const onShown = () => { hiddenRef.current = false; };
+    window.addEventListener('peekgrep:hidden', onHidden);
+    window.addEventListener('peekgrep:shown', onShown);
+    return () => {
+      window.removeEventListener('peekgrep:hidden', onHidden);
+      window.removeEventListener('peekgrep:shown', onShown);
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     let timer = 0;
@@ -82,7 +94,7 @@ function Workspace() {
           lastRefresh.current = now;
           setRefreshTick(t => t + 1);
         }
-        timer = window.setTimeout(tick, s.phase === 'ready' ? 4000 : 900);
+        timer = window.setTimeout(tick, hiddenRef.current ? 30000 : s.phase === 'ready' ? 4000 : 900);
       } catch {
         timer = window.setTimeout(tick, 2000);
       }
@@ -448,7 +460,7 @@ function Workspace() {
               <span className="hidden md:flex items-center gap-1.5"><span className="kbd">Ctrl</span><span className="kbd">C</span> Copy path</span>
             </div>
             <div className="flex items-center gap-1.5 whitespace-nowrap" title={folders.join('\n')}>
-              <span className={`w-1.5 h-1.5 rounded-full ${status?.watcher_active ? 'live-dot' : ''}`} style={{ background: status?.watcher_active ? 'var(--ok)' : 'var(--text-3)' }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: status?.watcher_active ? 'var(--ok)' : 'var(--text-3)' }} />
               {scope ? `In ${folderLabel(scope)}` : `Watching ${folders.length} folder${folders.length === 1 ? '' : 's'}`}
             </div>
           </footer>

@@ -78,10 +78,13 @@ export const CommandBar: React.FC<CommandBarProps> = ({
             className="absolute inset-0 w-[18px] h-[18px] transition-all duration-200"
             style={{ opacity: busy ? 0 : 1, transform: busy ? 'scale(0.6)' : 'scale(1)' }}
           />
-          <span
-            className="absolute inset-[2px] rounded-full spin transition-opacity duration-200"
-            style={{ opacity: busy ? 1 : 0, border: '2px solid var(--line-strong)', borderTopColor: 'var(--accent)' }}
-          />
+          {/* Mounted only while busy: an invisible endless animation still costs GPU time */}
+          {busy && (
+            <span
+              className="absolute inset-[2px] rounded-full spin"
+              style={{ border: '2px solid var(--line-strong)', borderTopColor: 'var(--accent)' }}
+            />
+          )}
         </span>
 
         {scope && (

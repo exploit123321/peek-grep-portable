@@ -161,7 +161,8 @@
   0% { box-shadow: 0 0 0 0 var(--accent-line); }
   100% { box-shadow: 0 0 0 7px rgba(124, 156, 255, 0); }
 }
-.pulse-ring { animation: pulse-ring 1.6s var(--ease-out) infinite; }
+/* A few pulses, not endless: endless animations keep the GPU busy while the app is idle */
+.pulse-ring { animation: pulse-ring 1.6s var(--ease-out) 3; }
 
 @keyframes live-dot {
   0%, 100% { opacity: 1; }

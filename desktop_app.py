@@ -36,11 +36,13 @@ INSTANCE_FILE = DATA_DIR / "instance.json"
 LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # The window only loads pages from 127.0.0.1. These switches stop WebView2's own background
-# calls: Edge configuration downloads, network error reports, and the WPAD proxy lookup.
+# calls (Edge configuration downloads) and the WPAD proxy lookup.
 # ElasticOverscroll is the switch that pywebview sets itself (one --disable-features list only).
+# Do not add NetworkErrorLogging to that list: in WebView2 155 it makes the browser process
+# use a full CPU core all the time (measured 2026-10-21).
 WEBVIEW2_ARGS = (
     "--disable-background-networking --no-proxy-server "
-    "--disable-features=ElasticOverscroll,NetworkErrorLogging"
+    "--disable-features=ElasticOverscroll"
 )
 DEFAULT_SIZE = (880, 620)
 MIN_SIZE = (560, 420)
@@ -247,6 +249,8 @@ def hide_window():
         try:
             main_window.hide()
             window_visible = False
+            # The page polls less while it is in the tray
+            main_window.evaluate_js("window.dispatchEvent(new CustomEvent('peekgrep:hidden'))")
         except Exception as e:
             print(f"[Desktop App] Error hiding window: {e}")
 
