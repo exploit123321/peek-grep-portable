@@ -127,7 +127,8 @@ async def get_preview(
 
     if ext in DATA_EXTENSIONS:
         try:
-            content, truncated = read_text_head(norm_path)
+            # Tables load completely (up to 100 MB); the UI draws only the visible rows
+            content, truncated = read_text_head(norm_path, limit=100 * 1024 * 1024)
             default = "\t" if ext in (".tsv", ".tab") else ","
             chosen = DELIMITERS.get(delimiter.lower())
             sep = chosen if chosen is not None else detect_delimiter(content, default=default)

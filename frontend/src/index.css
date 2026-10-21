@@ -290,3 +290,7 @@ pre[class*="language-"] {
   background-color: rgba(250, 204, 21, 0.85);
   color: #111;
 }
+
+/* Search hits drawn inside virtual tables */
+mark.grid-hit { background: rgba(250, 204, 21, 0.26); color: inherit; box-shadow: none; font-weight: inherit; border-radius: 2px; }
+mark.grid-hit-current { background: rgba(250, 204, 21, 0.85); color: #111; box-shadow: none; font-weight: inherit; border-radius: 2px; }

@@ -25,8 +25,9 @@ OFFICE_EXTENSIONS = WORD_EXTENSIONS | EXCEL_EXTENSIONS | POWERPOINT_EXTENSIONS
 # Limits that keep previews fast and protect against huge or hostile files
 MAX_XML_BYTES = 64 * 1024 * 1024
 MAX_SHEETS = 30
-MAX_ROWS = 300
-MAX_COLS = 60
+MAX_ROWS = 300_000   # rows kept for the preview (the UI draws only the visible rows)
+MAX_COLS = 200
+MAX_CELLS = 3_000_000  # cells kept for the preview of one sheet
 MAX_TEXT_CHARS = 2_000_000
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -48,17 +49,22 @@ def preview_kind(ext: str) -> Optional[str]:
     return None
 
 
-def extract_office(path: str, ext: str) -> Dict[str, Any]:
-    """Preview data and text for any supported Office file (new or old format)."""
+def extract_office(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
+                   sheet_index: Optional[int] = None) -> Dict[str, Any]:
+    """Preview data and text for any supported Office file (new or old format).
+
+    For workbooks, offset/limit select the row window and sheet_index one sheet (a page request,
+    without search text).
+    """
     ext = ext.lower()
     if ext in (".doc", ".xls", ".ppt"):
         from app.indexer import legacy_office
-        return legacy_office.extract(path, ext)
+        return legacy_office.extract(path, ext, offset=offset, limit=limit, sheet_index=sheet_index)
     with zipfile.ZipFile(path) as zf:
         if ext in WORD_EXTENSIONS:
             return _docx(zf)
         if ext in EXCEL_EXTENSIONS:
-            return _xlsx(zf)
+            return _xlsx(zf, offset, limit, sheet_index)
         if ext in POWERPOINT_EXTENSIONS:
             return _pptx(zf)
     raise ValueError(f"Not an Office file: {ext}")
@@ -66,7 +72,8 @@ def extract_office(path: str, ext: str) -> Dict[str, Any]:
 
 def extract_office_text(path: str, ext: str) -> Optional[str]:
     try:
-        text = extract_office(path, ext).get("text") or ""
+        # limit=0: text only, no preview cells
+        text = extract_office(path, ext, limit=0).get("text") or ""
         return text[:MAX_TEXT_CHARS].strip() or None
     except Exception:
         return None
@@ -258,24 +265,31 @@ def _column_index(ref: str) -> int:
     return max(0, n - 1)
 
 
-def sheet_result(name: str, cells: Dict[Tuple[int, int], str], total_rows: int) -> Dict[str, Any]:
-    """Grid with Excel letters as headers. cells: (row, col) -> text, both 0-based."""
-    if not cells:
-        return {"name": name, "columns": [], "rows": [], "total_rows": 0, "total_columns": 0, "truncated": False}
-    max_row = min(max(r for r, _ in cells), MAX_ROWS - 1)
-    max_col = min(max(c for _, c in cells), MAX_COLS - 1)
-    rows = [[cells.get((r, c), "") for c in range(max_col + 1)] for r in range(max_row + 1)]
+def sheet_result(name: str, cells: Dict[Tuple[int, int], str], total_rows: int, offset: int = 0,
+                 limit: int = MAX_ROWS, total_columns: int = 0) -> Dict[str, Any]:
+    """One row window of a sheet, with Excel letters as headers.
+
+    cells: (row, col) -> text, both 0-based and absolute. total_rows: last used row + 1.
+    """
+    last_row = max((r for r, _ in cells), default=-1)
+    total = max(total_rows, last_row + 1)
+    total_cols = max(total_columns, max((c for _, c in cells), default=-1) + 1)
+    width = min(total_cols, MAX_COLS)
+    end = min(total, offset + limit)
+    rows = [[cells.get((r, c), "") for c in range(width)] for r in range(offset, end)]
     return {
         "name": name,
-        "columns": [column_letter(c) for c in range(max_col + 1)],
+        "columns": [column_letter(c) for c in range(width)],
         "rows": rows,
-        "total_rows": max(total_rows, max_row + 1),
-        "total_columns": max(c for _, c in cells) + 1,
-        "truncated": total_rows > MAX_ROWS or max(c for _, c in cells) >= MAX_COLS,
+        "offset": offset,
+        "total_rows": total,
+        "total_columns": total_cols,
+        "truncated": end < total or total_cols > MAX_COLS,
     }
 
 
-def _xlsx(zf: zipfile.ZipFile) -> Dict[str, Any]:
+def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
+          sheet_index: Optional[int] = None) -> Dict[str, Any]:
     wb = _read_xml(zf, "xl/workbook.xml")
     if wb is None:
         raise ValueError("xl/workbook.xml is missing")
@@ -303,10 +317,12 @@ def _xlsx(zf: zipfile.ZipFile) -> Dict[str, Any]:
     sheets: List[Dict[str, Any]] = []
     texts: List[str] = []
     text_chars = 0
-    for sheet in wb.iter(f"{S}sheet"):
-        if len(sheets) >= MAX_SHEETS:
+    for number, sheet in enumerate(wb.iter(f"{S}sheet")):
+        if number >= MAX_SHEETS:
             break
-        name = sheet.get("name", f"Sheet{len(sheets) + 1}")
+        if sheet_index is not None and number != sheet_index:
+            continue
+        name = sheet.get("name", f"Sheet{number + 1}")
         part = rels.get(sheet.get(f"{R}id", ""), "")
         if not part or part not in zf.namelist():
             continue
@@ -314,17 +330,22 @@ def _xlsx(zf: zipfile.ZipFile) -> Dict[str, Any]:
             sheets.append(sheet_result(name, {(0, 0): "This sheet is too large to preview."}, 1))
             continue
         cells: Dict[Tuple[int, int], str] = {}
-        total_rows = 0
+        last_row = -1
+        max_col = -1
         row_index = -1
         with zf.open(part) as fh:
             for _, el in ET.iterparse(fh, events=("end",)):
                 if el.tag != f"{S}row":
                     continue
-                total_rows += 1
                 row_index = int(el.get("r", row_index + 2)) - 1
-                # All rows go into the search text; the preview keeps the first MAX_ROWS
-                keep = row_index < MAX_ROWS
-                if not keep and text_chars > MAX_TEXT_CHARS:
+                # The preview keeps one row window; all rows go into the search text
+                keep = offset <= row_index < offset + limit
+                if not keep and (sheet_index is not None or text_chars > MAX_TEXT_CHARS):
+                    if len(el):
+                        last_row = max(last_row, row_index)
+                        ref = el[-1].get("r")
+                        if ref:
+                            max_col = max(max_col, _column_index(ref))
                     el.clear()
                     continue
                 col_index = -1
@@ -352,12 +373,18 @@ def _xlsx(zf: zipfile.ZipFile) -> Dict[str, Any]:
                     else:
                         val = ""
                     if val != "":
+                        last_row = max(last_row, row_index)
+                        max_col = max(max_col, col_index)
                         if keep and col_index < MAX_COLS:
                             cells[(row_index, col_index)] = val
-                        texts.append(val)
-                        text_chars += len(val) + 1
+                            if len(cells) >= MAX_CELLS:
+                                # Cell cap: the preview ends after this row
+                                limit = row_index + 1 - offset
+                        if sheet_index is None:
+                            texts.append(val)
+                            text_chars += len(val) + 1
                 el.clear()
-        sheets.append(sheet_result(name, cells, total_rows))
+        sheets.append(sheet_result(name, cells, last_row + 1, offset, limit, max_col + 1))
     return {"sheets": sheets, "text": "\n".join(s["name"] for s in sheets) + "\n" + " ".join(texts)}
 
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Minus, Plus } from 'lucide-react';
 import { EditModel } from '../../api';
+import { VirtualGrid } from '../VirtualGrid';
 
 // Each editor reports its save payload and whether anything changed.
 export interface EditorProps {
@@ -55,117 +56,6 @@ export const TextEditor: React.FC<EditorProps & { initial?: string }> = ({ model
   );
 };
 
-// -- Grid with click-to-edit cells (CSV and Excel) -----------------------------------
-
-interface GridProps {
-  columns: string[];
-  rows: string[][];
-  edited: Set<string>;
-  locked?: Set<string>;
-  rowNumbers?: boolean;
-  onEdit: (r: number, c: number, value: string) => void;
-  selectedRow?: number | null;
-  onSelectRow?: (r: number) => void;
-}
-
-const EditableGrid: React.FC<GridProps> = ({ columns, rows, edited, locked, rowNumbers = true, onEdit, selectedRow, onSelectRow }) => {
-  const [active, setActive] = useState<{ r: number; c: number } | null>(null);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useLayoutEffect(() => {
-    if (active) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [active]);
-
-  const open = (r: number, c: number) => {
-    if (locked?.has(`${r},${c}`)) return;
-    setActive({ r, c });
-    setDraft(rows[r]?.[c] ?? '');
-  };
-  const commit = (move?: [number, number]) => {
-    if (!active) return;
-    if ((rows[active.r]?.[active.c] ?? '') !== draft) onEdit(active.r, active.c, draft);
-    if (move) {
-      const r = Math.max(0, active.r + move[0]);
-      const c = Math.max(0, Math.min(columns.length - 1, active.c + move[1]));
-      if (r < rows.length) open(r, c);
-      else setActive(null);
-    } else setActive(null);
-  };
-
-  return (
-    <table className="text-left text-[12px] border-collapse font-mono">
-      <thead className="sticky top-0 z-10" style={{ background: 'var(--surface-2)' }}>
-        <tr>
-          {rowNumbers && <th className="sticky left-0 w-12" style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--line-strong)' }} />}
-          {columns.map((col, i) => (
-            <th key={i} className="px-3 py-1.5 min-w-[96px] text-center text-fg-3 font-medium" style={{ borderBottom: '1px solid var(--line-strong)', borderLeft: '1px solid var(--line)' }}>
-              {col}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, r) => (
-          <tr key={r} style={{ borderBottom: '1px solid var(--line)', background: selectedRow === r ? 'var(--accent-soft)' : undefined }}>
-            {rowNumbers && (
-              <td
-                className="sticky left-0 px-2 py-1 text-center text-fg-3 select-none cursor-default"
-                style={{ background: selectedRow === r ? 'rgba(124,156,255,0.2)' : 'var(--bg)' }}
-                onClick={() => onSelectRow?.(r)}
-              >
-                {r + 1}
-              </td>
-            )}
-            {columns.map((_, c) => {
-              const key = `${r},${c}`;
-              const isActive = active?.r === r && active?.c === c;
-              const isLocked = locked?.has(key);
-              return (
-                <td
-                  key={c}
-                  onClick={() => open(r, c)}
-                  title={isLocked ? 'Formula cell: edit it in Excel' : undefined}
-                  className={`relative px-3 py-1 whitespace-nowrap max-w-[360px] truncate ${isLocked ? 'text-fg-3 italic cursor-not-allowed' : 'text-fg-2 cursor-text'}`}
-                  style={{
-                    borderLeft: '1px solid var(--line)',
-                    background: edited.has(key) ? 'rgba(62,207,142,0.12)' : undefined,
-                    boxShadow: isActive ? 'inset 0 0 0 2px var(--accent)' : undefined,
-                  }}
-                >
-                  {isActive ? (
-                    <input
-                      ref={inputRef}
-                      value={draft}
-                      onChange={e => setDraft(e.target.value)}
-                      onBlur={() => commit()}
-                      onKeyDown={e => {
-                        e.stopPropagation();
-                        if (e.key === 'Enter') { e.preventDefault(); commit([e.shiftKey ? -1 : 1, 0]); }
-                        else if (e.key === 'Tab') { e.preventDefault(); commit([0, e.shiftKey ? -1 : 1]); }
-                        else if (e.key === 'Escape') { e.preventDefault(); setActive(null); }
-                      }}
-                      className="absolute inset-0 w-full px-3 bg-[#101016] text-fg outline-none font-mono text-[12px]"
-                    />
-                  ) : (
-                    <>
-                      {isLocked && <Lock className="inline w-3 h-3 mr-1 -mt-0.5 opacity-60" />}
-                      {row[c] ?? ''}
-                    </>
-                  )}
-                </td>
-              );
-            })}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-};
-
 // -- CSV ----------------------------------------------------------------------------
 
 export const CsvEditor: React.FC<EditorProps> = ({ model, onChange }) => {
@@ -215,8 +105,9 @@ export const CsvEditor: React.FC<EditorProps> = ({ model, onChange }) => {
           <Minus className="w-3.5 h-3.5" /> Row
         </button>
       </div>
-      <div className="flex-1 overflow-auto select-text">
-        <EditableGrid
+      <div className="flex-1 min-h-0">
+        <VirtualGrid
+          editable
           columns={columns}
           rows={rows}
           edited={structural ? new Set() : edited}
@@ -247,7 +138,7 @@ export const WorkbookEditor: React.FC<EditorProps> = ({ model, onChange }) => {
 
   // Some empty space to the right and below, so that new cells can be filled in
   const cols = Math.min(60, Math.max(sheet.columns.length + 3, 8));
-  const rowsCount = Math.min(300, Math.max(data[index].length + 5, 20));
+  const rowsCount = Math.max(data[index].length + 20, 40);
   const columns = Array.from({ length: cols }, (_, i) => {
     let n = i + 1, s = '';
     while (n) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
@@ -263,10 +154,11 @@ export const WorkbookEditor: React.FC<EditorProps> = ({ model, onChange }) => {
         Click a cell to edit. Formula cells
         <Lock className="w-3 h-3" />
         are locked. Dates use the form 2026-12-24.
-        {sheet.truncated && <span className="text-warn">Only the first 300 rows and 60 columns can be edited here.</span>}
+        {sheet.truncated && <span className="text-warn">This sheet is larger than the preview limit; only the loaded part can be edited here.</span>}
       </div>
-      <div className="flex-1 overflow-auto select-text">
-        <EditableGrid
+      <div className="flex-1 min-h-0">
+        <VirtualGrid
+          editable
           columns={columns}
           rows={grid}
           edited={edited}

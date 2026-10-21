@@ -14,6 +14,7 @@ import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/Offi
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
+import { HitReport, HitsContext } from './VirtualGrid';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
 // Quick Look grows out of the selected row and sharpens from a blur (matrix ref R03 Blur Reveal).
@@ -168,10 +169,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [hits, setHits] = useState<Range[]>([]);
   const [hitIndex, setHitIndex] = useState(0);
+  // Table views report their hits from the data (they draw only the visible rows)
+  const [tableHits, setTableHits] = useState<HitReport | null>(null);
+  const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook';
 
   useEffect(() => {
     const root = bodyRef.current;
-    if (!root || editing || !data || !query.trim()) {
+    if (!root || editing || !data || !query.trim() || isTableView) {
       clearHits();
       setHits([]);
       return;
@@ -198,11 +202,15 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       cancelAnimationFrame(raf);
       window.clearTimeout(timer);
     };
-  }, [data, raw, editing, query]);
+  }, [data, raw, editing, query, isTableView]);
 
   useEffect(() => () => clearHits(), []);
 
   const goHit = (step: number) => {
+    if (tableHits) {
+      tableHits.go(step);
+      return;
+    }
     if (!hits.length) return;
     const next = (hitIndex + step + hits.length) % hits.length;
     setHitIndex(next);
@@ -269,7 +277,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'markdown':
         return <MarkdownPreview content={current.content || ''} raw={raw} />;
       case 'table':
-        return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} /> : null;
+        return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} query={query} /> : null;
       case 'image':
         return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
       case 'pdf':
@@ -326,13 +334,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
               ))}
             </span>
           </div>
-          {hits.length > 0 && !editing && (
+          {(tableHits ? tableHits.count : hits.length) > 0 && !editing && (
             <span className="flex items-center h-7 rounded-lg text-[11.5px] text-fg-2" style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }} title="Search hits in this file (F3, Shift+F3)">
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title="Previous hit (Shift+F3)">
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
               <span className="font-mono px-1 tabular-nums" style={{ color: '#facc15' }}>
-                {hitIndex + 1}/{hits.length}
+                {tableHits ? `${tableHits.index + 1}/${tableHits.count.toLocaleString()}` : `${hitIndex + 1}/${hits.length}`}
               </span>
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(1)} title="Next hit (F3)">
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -379,10 +387,12 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           </button>
         </div>
 
+        <HitsContext.Provider value={setTableHits}>
         <div ref={bodyRef} className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
           {loading && current && <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden loading-line z-10" />}
           {body()}
         </div>
+        </HitsContext.Provider>
 
         <div className="flex items-center justify-between gap-3 h-9 px-4 shrink-0 text-[11.5px] text-fg-3" style={{ borderTop: '1px solid var(--line)' }}>
           <div className="flex items-center gap-3 font-mono">

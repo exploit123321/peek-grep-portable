@@ -36,7 +36,7 @@ def test_excel(ext):
     assert prices["rows"][2][1] == "1234567"
     assert prices["rows"][2][3] == "Ūnicode žluťoučký"
     many = r["sheets"][1]
-    assert many["total_rows"] == 3000 and many["truncated"] is True
+    assert many["total_rows"] == 3000 and len(many["rows"]) == 3000 and many["truncated"] is False
     # Strings far into the shared string table (old format: across CONTINUE records)
     assert "uniquestring2999-xxxxxxxxxx" in r["text"]
 

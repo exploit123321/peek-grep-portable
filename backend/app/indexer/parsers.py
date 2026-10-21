@@ -338,19 +338,22 @@ def delimiter_name(d: str) -> str:
             return name
     return "comma"
 
-def parse_csv_content(text_content: str, delimiter: str = ",") -> Tuple[List[str], List[List[str]], int]:
-    """Parse CSV text into columns and sample rows."""
+def parse_csv_content(text_content: str, delimiter: str = ",", max_rows: int = 300_000,
+                      max_cells: int = 3_000_000) -> Tuple[List[str], List[List[str]], int]:
+    """Parse CSV text into columns (first row) and data rows, up to the preview limits."""
     reader = csv.reader(io.StringIO(text_content), delimiter=delimiter)
     rows: List[List[str]] = []
     columns: List[str] = []
     total_rows = 0
+    cells = 0
 
     for i, row in enumerate(reader):
         total_rows += 1
         if i == 0:
             columns = [col.strip() for col in row]
-        elif len(rows) < 100:  # Cap preview rows to 100
+        elif len(rows) < max_rows and cells < max_cells:
             rows.append(row)
+            cells += len(row)
 
     if not columns and rows:
         columns = [f"Col {idx+1}" for idx in range(len(rows[0]))]

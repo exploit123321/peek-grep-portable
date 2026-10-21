@@ -15,6 +15,7 @@ import struct
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.indexer.office import (
+    MAX_CELLS,
     MAX_COLS,
     MAX_ROWS,
     MAX_SHEETS,
@@ -115,7 +116,8 @@ class CompoundFile:
         return None
 
 
-def extract(path: str, ext: str) -> Dict[str, Any]:
+def extract(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
+            sheet_index: Optional[int] = None) -> Dict[str, Any]:
     with open(path, "rb") as f:
         data = f.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
@@ -124,7 +126,7 @@ def extract(path: str, ext: str) -> Dict[str, Any]:
     if ext == ".doc":
         return _doc(cf)
     if ext == ".xls":
-        return _xls(cf)
+        return _xls(cf, offset, limit, sheet_index)
     if ext == ".ppt":
         return _ppt(cf)
     raise ValueError(f"Unsupported format {ext}")
@@ -311,7 +313,8 @@ def _rk(value: int) -> float:
     return num / 100 if value & 0x01 else num
 
 
-def _xls(cf: CompoundFile) -> Dict[str, Any]:
+def _xls(cf: CompoundFile, row_offset: int = 0, row_limit: int = MAX_ROWS,
+         sheet_index: Optional[int] = None) -> Dict[str, Any]:
     data = cf.stream("Workbook", "Book")
     if not data:
         raise ValueError("Not an Excel 97-2003 workbook")
@@ -378,18 +381,27 @@ def _xls(cf: CompoundFile) -> Dict[str, Any]:
 
     sheets: List[Dict[str, Any]] = []
     texts: List[str] = []
-    for name, offset in sheets_info[:MAX_SHEETS]:
+    for sheet_no, (name, stream_pos) in enumerate(sheets_info[:MAX_SHEETS]):
+        if sheet_index is not None and sheet_no != sheet_index:
+            continue
         cells: Dict[Tuple[int, int], str] = {}
         total_rows = 0
+        last = [-1, -1]  # last used row and column
+        window = [row_limit]  # rows kept for the preview (smaller when the cell cap is reached)
         pending_formula: Optional[Tuple[int, int]] = None
 
         def put(r: int, c: int, value: str) -> None:
-            if value != "" and r < MAX_ROWS and c < MAX_COLS:
+            if value == "":
+                return
+            last[0], last[1] = max(last[0], r), max(last[1], c)
+            if row_offset <= r < row_offset + window[0] and c < MAX_COLS:
                 cells[(r, c)] = value
-            if value != "":
+                if len(cells) >= MAX_CELLS:
+                    window[0] = r + 1 - row_offset  # cell cap: the preview ends after this row
+            if sheet_index is None:
                 texts.append(value)
 
-        for rtype, body, _ in _records(data, offset):
+        for rtype, body, _ in _records(data, stream_pos):
             try:
                 if rtype == 0x000A:
                     break
@@ -431,7 +443,7 @@ def _xls(cf: CompoundFile) -> Dict[str, Any]:
                     pending_formula = None
             except (struct.error, IndexError):
                 continue
-        sheets.append(sheet_result(name, cells, total_rows))
+        sheets.append(sheet_result(name, cells, max(total_rows, last[0] + 1), row_offset, window[0], last[1] + 1))
     return {"sheets": sheets, "text": "\n".join(n for n, _ in sheets_info) + "\n" + " ".join(texts)}
 
 

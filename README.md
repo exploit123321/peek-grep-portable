@@ -1,4 +1,4 @@
-# Peek & Grep Portable 3.0
+﻿# Peek & Grep Portable 3.0
 
 A portable copy of Peek & Grep (original: `D:\New folder\peek-grep`, not changed).
 It searches file names and the text inside files, with a Quick Look preview. It reads only
@@ -17,7 +17,7 @@ the working folders that the user selects on the first start.
 |---|---|
 | Text, code, Markdown, `.ini`, `.log` | All text. Encoding, BOM, and line ends are kept. |
 | `.csv` `.tsv` | Cells, add and remove rows. The separator and encoding are kept. |
-| `.xlsx` `.xlsm` | Cell values (first 300 rows and 60 columns). Formatting, other sheets, and macros stay. Formula cells are locked. |
+| `.xlsx` `.xlsm` | Cell values in the whole sheet (preview limit: 300,000 rows, 200 columns). Formatting, other sheets, and macros stay. Formula cells are locked. |
 | `.docx` | Paragraph and table-cell text. Unchanged paragraphs stay exactly as they are. Paragraphs with pictures, links, fields, or tracked changes are locked. |
 | `.doc` `.xls` `.ppt` | Not editable (use Open). |
 
@@ -54,7 +54,7 @@ Tests (41): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 | UI part | Motion | Matrix reference |
 |---|---|---|
 | Search field, result list | Command palette, one highlight glides between rows | R41 Command Menu (M1, Q1) |
-| Folder scope chip | Breadcrumb chip with a stacked layer behind the bar, Backspace leaves the scope | R23 ⌘K Breadcrumbs (Q2) |
+| Folder scope chip | Breadcrumb chip with a stacked layer behind the bar, Backspace leaves the scope | R23 вЊK Breadcrumbs (Q2) |
 | Mode and type switches | Sliding pill, labels invert under the pill | R05 Exclusion Tabs (Q2) |
 | Mode and type switches | Soft light follows the pointer | R38 Flashlight Tabs (Q2) |
 | Selected row | Accent prefix, rows away from the selection fade | E14 Slot scroll list (F2) |
