@@ -19,7 +19,7 @@ from app.indexer.parsers import (
     parse_csv_content,
 )
 from app.editing import edit_kind
-from app.indexer.office import OFFICE_EXTENSIONS, extract_office, preview_kind
+from app.indexer.office import OFFICE_EXTENSIONS, extract_office_preview, preview_kind
 from app.schemas import EpubChapter, EpubPreviewMeta, ImagePreviewMeta, PreviewResponse, TablePreviewData
 from app.state import require_allowed
 
@@ -64,6 +64,7 @@ LANGUAGE_MAP = {
 async def get_preview(
     path: str = Query(..., description="Absolute path to file"),
     delimiter: str = Query("auto", description="Table separator: auto, comma, semicolon, tab, colon, pipe, space"),
+    quick: bool = Query(False, description="Workbooks: first rows of each sheet only (a full request follows)"),
 ) -> PreviewResponse:
     """Produce formatted preview payload for Quick Look HUD overlay."""
     norm_path = os.path.normpath(os.path.abspath(path))
@@ -108,7 +109,7 @@ async def get_preview(
 
     if ext in OFFICE_EXTENSIONS:
         try:
-            office = await run_in_threadpool(extract_office, norm_path, ext)
+            office = await run_in_threadpool(extract_office_preview, norm_path, ext, quick)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Cannot read this Office file: {e}")
         return PreviewResponse(
@@ -141,7 +142,6 @@ async def get_preview(
                 size_bytes=size_bytes,
                 mtime=mtime,
                 preview_type="table",
-                content=content,
                 truncated=truncated,
                 table_data=TablePreviewData(
                     columns=cols,

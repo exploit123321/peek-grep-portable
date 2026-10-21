@@ -32,6 +32,7 @@ from app.indexer.office import (
     _rels,
     column_letter,
     extract_office,
+    extract_office_preview,
 )
 from app.indexer.parsers import DELIMITERS, TEXT_EXTENSIONS, delimiter_name, detect_delimiter
 
@@ -200,11 +201,11 @@ def load(path: str, ext: str) -> Dict[str, Any]:
     if kind == "workbook":
         if os.path.getsize(path) > MAX_EDIT_BYTES * 4:
             raise EditError("The workbook is too large to edit here.", 413)
-        preview = extract_office(path, ext)
+        preview = extract_office_preview(path, ext)
         formulas = _xlsx_formula_cells(path)
-        for sheet in preview["sheets"]:
-            sheet["formulas"] = sorted(formulas.get(sheet["name"], []))
-        return {**base, "sheets": preview["sheets"]}
+        # Copies: the preview data is cached and shared
+        sheets = [{**sheet, "formulas": sorted(formulas.get(sheet["name"], []))} for sheet in preview["sheets"]]
+        return {**base, "sheets": sheets}
 
     if kind == "document":
         if os.path.getsize(path) > MAX_EDIT_BYTES * 4:
@@ -378,7 +379,7 @@ def _set_cell(c: ET.Element, value: str, is_date_cell: bool) -> None:
 
 def _xlsx_save(src: str, dst: str, changes: Dict[str, Dict[str, str]]) -> None:
     """changes: sheet name -> {"row,col": value} (0-based)."""
-    preview = extract_office(src, os.path.splitext(src)[1])
+    preview = extract_office_preview(src, os.path.splitext(src)[1])
     date_cells: Dict[str, set] = {}
     replaced: Dict[str, bytes] = {}
     removed: Tuple[str, ...] = ()

@@ -36,8 +36,15 @@ export const WorkbookPreview: React.FC<{ sheets: SheetData[]; query?: string }> 
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-4 h-11 shrink-0 text-[12px] text-fg-3" style={{ borderBottom: '1px solid var(--line)' }}>
         <span className="whitespace-nowrap">
-          {sheet.total_rows.toLocaleString()} rows · {sheet.total_columns} columns
-          {shown < sheet.total_rows && ` · first ${shown.toLocaleString()} rows shown (preview limit)`}
+          {sheet.partial ? `${shown.toLocaleString()}+` : sheet.total_rows.toLocaleString()} rows · {sheet.total_columns} columns
+          {sheet.partial ? (
+            <span className="inline-flex items-center gap-1.5 ml-1 text-accent">
+              · <span className="w-3 h-3 rounded-full spin" style={{ border: '1.5px solid var(--line-strong)', borderTopColor: 'var(--accent)' }} />
+              Loading all rows…
+            </span>
+          ) : (
+            shown < sheet.total_rows && ` · first ${shown.toLocaleString()} rows shown (preview limit)`
+          )}
           {sheet.total_columns > sheet.columns.length && ` · first ${sheet.columns.length} columns shown`}
         </span>
       </div>

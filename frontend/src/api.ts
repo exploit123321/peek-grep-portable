@@ -130,8 +130,8 @@ export const api = {
     if (params.folder) qs.set('folder', params.folder);
     return request<SearchResponse>(`/api/search?${qs.toString()}`, { signal });
   },
-  preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto') =>
-    request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}`, { signal }),
+  preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto', quick = false) =>
+    request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}${quick ? '&quick=true' : ''}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),
   reveal: (path: string) => post<{ message: string }>('/api/actions/reveal', { path }),
   editLoad: (path: string) => request<EditModel>(`/api/edit?path=${encodeURIComponent(path)}`),
@@ -214,6 +214,7 @@ export interface SheetData {
   total_rows: number;
   total_columns: number;
   truncated: boolean;
+  partial?: boolean;
 }
 
 export interface SlideData {

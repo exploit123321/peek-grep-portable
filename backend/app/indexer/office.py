@@ -10,7 +10,10 @@ Every reader returns a dict with "text" (for the search index) and preview data:
 """
 
 import html
+import os
 import posixpath
+import threading
+from collections import OrderedDict
 import re
 import zipfile
 from datetime import datetime, timedelta
@@ -50,7 +53,7 @@ def preview_kind(ext: str) -> Optional[str]:
 
 
 def extract_office(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
-                   sheet_index: Optional[int] = None) -> Dict[str, Any]:
+                   sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False) -> Dict[str, Any]:
     """Preview data and text for any supported Office file (new or old format).
 
     For workbooks, offset/limit select the row window and sheet_index one sheet (a page request,
@@ -64,10 +67,53 @@ def extract_office(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
         if ext in WORD_EXTENSIONS:
             return _docx(zf)
         if ext in EXCEL_EXTENSIONS:
-            return _xlsx(zf, offset, limit, sheet_index)
+            return _xlsx(zf, offset, limit, sheet_index, with_text, quick)
         if ext in POWERPOINT_EXTENSIONS:
             return _pptx(zf)
     raise ValueError(f"Not an Office file: {ext}")
+
+
+# Preview cache: opening the same unchanged file again is instant. Small on purpose.
+_CACHE: "OrderedDict[Tuple[str, int, int, bool], Dict[str, Any]]" = OrderedDict()
+_CACHE_LOCK = threading.Lock()
+_CACHE_FILES = 3
+_CACHE_CELLS = 2_000_000
+
+
+def _cell_count(result: Dict[str, Any]) -> int:
+    return sum(len(r) for s in result.get("sheets") or [] for r in s.get("rows", []))
+
+
+QUICK_ROWS = 2000  # rows per sheet in the quick first answer for large workbooks
+
+
+def extract_office_preview(path: str, ext: str, quick: bool = False) -> Dict[str, Any]:
+    """Preview data without search text, cached by path, size, and modification time.
+
+    quick: the first QUICK_ROWS rows of each sheet (sheets that have more are marked partial).
+    """
+    if ext.lower() not in (".xlsx", ".xlsm"):
+        quick = False  # only the .xlsx reader can stop early; other formats load completely
+    st = os.stat(path)
+    key = (os.path.normcase(path), st.st_mtime_ns, st.st_size, quick)
+    with _CACHE_LOCK:
+        full_key = key[:3] + (False,)
+        if quick and full_key in _CACHE:
+            return _CACHE[full_key]  # the full result is already here
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            _CACHE.move_to_end(key)
+            return _CACHE[key]
+    if quick:
+        result = extract_office(path, ext, limit=QUICK_ROWS, with_text=False, quick=True)
+    else:
+        result = extract_office(path, ext, with_text=False)
+    result.pop("text", None)
+    with _CACHE_LOCK:
+        _CACHE[key] = result
+        while len(_CACHE) > _CACHE_FILES or (len(_CACHE) > 1 and sum(_cell_count(v) for v in _CACHE.values()) > _CACHE_CELLS):
+            _CACHE.popitem(last=False)
+    return result
 
 
 def extract_office_text(path: str, ext: str) -> Optional[str]:
@@ -288,8 +334,170 @@ def sheet_result(name: str, cells: Dict[Tuple[int, int], str], total_rows: int, 
     }
 
 
+# Fast reader for regular sheet XML (what Excel and most tools write): one compiled pattern over
+# large chunks instead of an element tree per cell. Returns None when the XML is not regular,
+# so that the ElementTree reader handles it.
+_CELL_RE = re.compile(r'<c\b([^>]*?)\sr="([A-Z]{1,3})(\d+)"([^>]*?)(?:/>|>(.*?)</c>)', re.S)
+_V_RE = re.compile(r"<v>(.*?)</v>", re.S)
+_T_RE = re.compile(r"<t(?:\s[^>]*)?>(.*?)</t>", re.S)
+_COL_CACHE: Dict[str, int] = {}
+
+
+def _col(letters: str) -> int:
+    idx = _COL_CACHE.get(letters)
+    if idx is None:
+        idx = _column_index(letters)
+        _COL_CACHE[letters] = idx
+    return idx
+
+
+def _xlsx_sheet_fast(zf: zipfile.ZipFile, part: str, shared: List[str], date_styles: set, date1904: bool,
+                     offset: int, limit: int, texts: Optional[List[str]], quick: bool = False):
+    import codecs
+    from html import unescape
+
+    with zf.open(part) as fh:
+        head = fh.read(65536).decode("utf-8", errors="replace")
+        # Regular XML only: default namespace, every cell with a position
+        if re.search(r"<\w+:c[\s>]", head) or ("<c>" in head) or re.search(r"<c(?![^>]*\sr=)[\s>]", head):
+            return None
+    row_lists: Dict[int, List[str]] = {}
+    cell_count = 0
+    last_row = -1
+    max_col = -1
+    chars = 0
+    end_row = offset + limit
+    n_shared = len(shared)
+    col_cache = _COL_CACHE
+    finditer = _CELL_RE.finditer
+    v_search = _V_RE.search
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    buf = ""
+    current_r = -2
+    current_list: Optional[List[str]] = None
+    stopped = False
+    with zf.open(part) as fh:
+        while not stopped:
+            chunk = fh.read(4 * 1024 * 1024)
+            buf += decoder.decode(chunk, final=not chunk)
+            cut = buf.rfind("</row>") + 6 if chunk else len(buf)
+            if cut <= 5 and chunk:
+                continue
+            block, buf = buf[:cut], buf[cut:]
+            for m in finditer(block):
+                before, letters, rownum, after, inner = m.groups()
+                if not inner:
+                    continue
+                r = int(rownum) - 1
+                c = col_cache.get(letters)
+                if c is None:
+                    c = _col(letters)
+                keep = offset <= r < end_row and c < MAX_COLS
+                if quick and r >= end_row:
+                    stopped = True
+                    break
+                if not keep and texts is None:
+                    if r > last_row:
+                        last_row = r
+                    if c > max_col:
+                        max_col = c
+                    continue
+                if ' t="' in before or ' t="' in after:
+                    attrs = before + after
+                    t = attrs.split(' t="', 1)[1].split('"', 1)[0]
+                else:
+                    t = "n"
+                if t == "s":
+                    vm = v_search(inner)
+                    raw = vm.group(1) if vm else ""
+                    val = shared[int(raw)] if raw.isdigit() and int(raw) < n_shared else ""
+                elif t == "inlineStr":
+                    val = "".join(_T_RE.findall(inner))
+                    if "&" in val:
+                        val = unescape(val)
+                else:
+                    vm = v_search(inner)
+                    raw = vm.group(1) if vm else ""
+                    if not raw:
+                        continue
+                    if t == "n":
+                        if date_styles and (' s="' in before or ' s="' in after):
+                            attrs = before + after
+                            style = int(attrs.split(' s="', 1)[1].split('"', 1)[0])
+                        else:
+                            style = -1
+                        if style in date_styles:
+                            try:
+                                val = excel_date(float(raw), date1904)
+                            except ValueError:
+                                val = raw
+                        elif raw.isdigit():
+                            val = raw
+                        else:
+                            try:
+                                val = format_number(float(raw))
+                            except ValueError:
+                                val = raw
+                    elif t == "b":
+                        val = "TRUE" if raw == "1" else "FALSE"
+                    else:
+                        val = unescape(raw) if "&" in raw else raw
+                if val == "":
+                    continue
+                if r > last_row:
+                    last_row = r
+                if c > max_col:
+                    max_col = c
+                if keep:
+                    if r != current_r:
+                        current_r = r
+                        current_list = row_lists.get(r)
+                        if current_list is None:
+                            current_list = row_lists[r] = []
+                    if len(current_list) <= c:
+                        current_list.extend([""] * (c + 1 - len(current_list)))
+                    current_list[c] = val
+                    cell_count += 1
+                    if cell_count >= MAX_CELLS:
+                        end_row = r + 1  # cell cap: the preview ends after this row
+                if texts is not None and chars <= MAX_TEXT_CHARS:
+                    texts.append(val)
+                    chars += len(val) + 1
+            if not chunk:
+                break
+    return row_lists, last_row, max_col, chars, end_row - offset, stopped
+
+
+def rows_result(name: str, row_lists: Dict[int, List[str]], total_rows: int, offset: int, limit: int,
+                total_columns: int) -> Dict[str, Any]:
+    """Same output as sheet_result, from rows that are already lists."""
+    total = total_rows
+    width = min(total_columns, MAX_COLS)
+    end = min(total, offset + limit)
+    empty = [""] * width
+    rows = []
+    for r in range(offset, end):
+        row = row_lists.get(r)
+        if row is None:
+            rows.append(list(empty))
+        elif len(row) < width:
+            rows.append(row + [""] * (width - len(row)))
+        else:
+            rows.append(row[:width])
+    return {
+        "name": name,
+        "columns": [column_letter(c) for c in range(width)],
+        "rows": rows,
+        "offset": offset,
+        "total_rows": total,
+        "total_columns": total_columns,
+        "truncated": end < total or total_columns > MAX_COLS,
+    }
+
+
 def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
-          sheet_index: Optional[int] = None) -> Dict[str, Any]:
+          sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False) -> Dict[str, Any]:
+    """quick: stop reading each sheet after the row window (the result is marked partial)."""
     wb = _read_xml(zf, "xl/workbook.xml")
     if wb is None:
         raise ValueError("xl/workbook.xml is missing")
@@ -329,6 +537,16 @@ def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
         if zf.getinfo(part).file_size > MAX_XML_BYTES * 4:
             sheets.append(sheet_result(name, {(0, 0): "This sheet is too large to preview."}, 1))
             continue
+        want_text = with_text and sheet_index is None
+        fast = _xlsx_sheet_fast(zf, part, shared, date_styles, date1904, offset, limit,
+                                texts if want_text else None, quick)
+        if fast is not None:
+            fast_cells, fast_last_row, fast_max_col, fast_chars, fast_limit, stopped = fast
+            text_chars += fast_chars
+            result = rows_result(name, fast_cells, fast_last_row + 1, offset, fast_limit, fast_max_col + 1)
+            result["partial"] = stopped
+            sheets.append(result)
+            continue
         cells: Dict[Tuple[int, int], str] = {}
         last_row = -1
         max_col = -1
@@ -340,7 +558,7 @@ def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
                 row_index = int(el.get("r", row_index + 2)) - 1
                 # The preview keeps one row window; all rows go into the search text
                 keep = offset <= row_index < offset + limit
-                if not keep and (sheet_index is not None or text_chars > MAX_TEXT_CHARS):
+                if not keep and (not want_text or text_chars > MAX_TEXT_CHARS):
                     if len(el):
                         last_row = max(last_row, row_index)
                         ref = el[-1].get("r")
@@ -380,7 +598,7 @@ def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
                             if len(cells) >= MAX_CELLS:
                                 # Cell cap: the preview ends after this row
                                 limit = row_index + 1 - offset
-                        if sheet_index is None:
+                        if want_text:
                             texts.append(val)
                             text_chars += len(val) + 1
                 el.clear()

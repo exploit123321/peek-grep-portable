@@ -150,11 +150,19 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     setLoading(true);
     setError(null);
     setRaw(false);
+    // Workbooks: a quick first answer (first rows of each sheet), then the full sheets
+    const isWorkbook = /\.xls[xm]$/i.test(item.path);
     api
-      .preview(item.path, ctrl.signal, delimiter)
+      .preview(item.path, ctrl.signal, delimiter, isWorkbook)
       .then(payload => {
         setData(payload);
         setLoading(false);
+        if (payload.sheets?.some(s => s.partial)) {
+          api
+            .preview(item.path, ctrl.signal, delimiter)
+            .then(full => setData(full))
+            .catch(() => {});
+        }
       })
       .catch(err => {
         if (ctrl.signal.aborted) return;

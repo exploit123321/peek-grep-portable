@@ -44,6 +44,7 @@ class SheetData(BaseModel):
     total_rows: int
     total_columns: int
     truncated: bool = False
+    partial: bool = False  # quick answer: more rows follow in the full preview
 
 class SlideParagraph(BaseModel):
     text: str
