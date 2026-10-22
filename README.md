@@ -29,7 +29,8 @@ was read, and the **?** button in the search field lists these examples.
 | `.xlsx:total` | "total" in the text of `.xlsx` files |
 | `invoice+.xlsx:total` | "total" in the text of `.xlsx` files with "invoice" in the name |
 | `invoice-old+.xlsx+.pdf:total` | "total" in `.xlsx` and `.pdf` files whose names have "invoice" and not "old" (invoiceold.pdf is left out) |
-| `:total+memo`, `:total-draft` | Texts with both words; texts with "total" but not "draft" |
+| `:annual review` | The words next to each other, in this order (only spaces or line breaks between them) |
+| `:total+memo`, `:total-draft` | Texts with both words anywhere; texts with "total" but not "draft" |
 | `-notes:total` | "total" in the text of files without "notes" in the name |
 | `[invoice, receipt]` | One expandable row per element, each with all its hits. Spaces after the comma do not matter |
 | `.xlsx:[total, tax]` | Text around the brackets applies to every element (`[invoice, receipt]+.pdf` too) |

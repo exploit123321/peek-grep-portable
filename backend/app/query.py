@@ -13,7 +13,8 @@ file names; after ":" it is the text inside the files. Everything is case-insens
     invoice+.xlsx:total  "total" in the text of .xlsx files with "invoice" in the name
     invoice-old+.xlsx+.pdf:total
                          "total" in .xlsx and .pdf files whose names have "invoice", not "old"
-    :total+memo          texts with both words; :total-draft leaves out texts with "draft"
+    :annual review       the words next to each other, in this order (a phrase)
+    :total+memo          texts with both words anywhere; :total-draft leaves out texts with "draft"
     [invoice, receipt]   one expandable group per element (spaces after the comma do not matter)
     tot*l  rec?ipt       wildcards: * any characters, ? exactly one character
     /note:               "/" makes the rest literal: names with "note:" (inside [ ] up to , or ])

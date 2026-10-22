@@ -32,7 +32,9 @@ export const QueryChips: React.FC<{ chips: ExplainChip[] }> = ({ chips }) => (
       const style = negative ? CHIP_STYLE.not : CHIP_STYLE[base] ?? CHIP_STYLE.name;
       let prefix = style.label;
       if (negative) prefix = base === 'ext' ? 'not' : base === 'exact' ? 'name is not' : base === 'name' ? 'name without' : base === 'text' ? 'text without' : 'without';
-      const text = c.kind === 'groups' ? `${c.text} groups` : c.literal ? `“${c.text}”` : c.text;
+      // Several words are one phrase (next to each other): shown in quotes
+      const phrase = c.literal || (/\S\s+\S/.test(c.text) && !base.startsWith('param'));
+      const text = c.kind === 'groups' ? `${c.text} groups` : phrase ? `“${c.text}”` : c.text;
       return (
         <span
           key={i}
@@ -68,7 +70,8 @@ function syntaxRows(o: SearchOptions): [string, string][] {
     if (o.extensions) rows.push([`.xlsx${T}total`, '“total” in the text of .xlsx files']);
     rows.push([`invoice${T}total`, '“total” in the text of files named “invoice”']);
   }
-  if (A) rows.push([`${T}total${A}memo`, 'both words must hit']);
+  if (T) rows.push([`${T}annual review`, 'these words next to each other (a phrase)']);
+  if (A) rows.push([`${T}total${A}memo`, 'both words, anywhere in the text']);
   if (o.group_open) rows.push([`${o.group_open}invoice${o.list_char} receipt${o.group_close}`, 'one expandable row per value']);
   if (o.wildcards) rows.push(['tot*l  rec?ipt', 'wildcards: * any characters, ? one']);
   if (L) rows.push([`${L}e${N || '-'}mail`, `${L} makes the rest literal`]);

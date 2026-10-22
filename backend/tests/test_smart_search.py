@@ -179,3 +179,33 @@ def test_parser_shapes():
     plan = parse_query('["Smith, John", x]')
     assert [e.label for e in plan.elements] == ["Smith, John", "x"]
     assert not parse_query(r"C:\Users\me").elements[0].has_colon
+
+
+def test_words_after_colon_are_a_phrase(tmp_path):
+    """":annual review" is these words next to each other; ":annual+review" is both words anywhere."""
+    clear_cache()
+    db_file = str(tmp_path / "phrase.db")
+    init_db(db_file)
+    texts = {
+        "plain.txt": "The Annual review of costs",
+        "lines.txt": "annual\n   reviews are due",
+        "code.ts": "costs.annual.review(items)",
+        "reversed.txt": "review the annual numbers",
+        "apart.txt": "annual numbers need a review",
+    }
+    for i, (name, content) in enumerate(texts.items()):
+        upsert_file(path=os.path.join(str(tmp_path), name), filename=name, extension=os.path.splitext(name)[1],
+                    size_bytes=len(content), mtime=1_700_000_000 + i, is_text=True, category="plain",
+                    content=content, db_path=db_file)
+
+    def found(q, **kw):
+        return sorted(r.filename for r in run_search(q, db_path=db_file, **kw)["results"])
+
+    assert found(":annual review") == ["lines.txt", "plain.txt"]
+    assert found(":annual+review") == ["apart.txt", "code.ts", "lines.txt", "plain.txt", "reversed.txt"]
+    assert found(":ann* review") == ["lines.txt", "plain.txt"]
+    assert found(':"annual review"') == ["lines.txt", "plain.txt"]
+    # Whole words only (text_prefix off): "reviews" is not "review"
+    from dataclasses import replace
+    from app.search_options import DEFAULTS
+    assert found(":annual review", options=replace(DEFAULTS, text_prefix=False)) == ["plain.txt"]

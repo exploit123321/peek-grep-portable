@@ -63,6 +63,20 @@ def _like_pattern(term: Term) -> str:
     return body if term.exact else "%" + body + "%"
 
 
+def _phrase_regex(marked: str, prefix: bool) -> str:
+    """Words next to each other, in order, with only white space between them (\x01 = *, \x02 = ?).
+    The last word may go on ("review" finds "reviews") when prefix is on."""
+    words = []
+    for word in marked.split():
+        words.append("".join(r"\w*" if ch == "\x01" else (r"\w" if ch == "\x02" else re.escape(ch)) for ch in word))
+    body = r"\s+".join(words)
+    if marked[:1].isalnum() or marked[:1] in "_\x01\x02":
+        body = r"(?<!\w)" + body
+    if not prefix:
+        body += r"(?!\w)"
+    return body
+
+
 def _text_regex(text: str) -> str:
     """Check for a literal text in file content: white space is flexible, the start is a word start."""
     words = [re.escape(w) for w in text.split()]
@@ -119,7 +133,7 @@ def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term,
         if not words:
             return None, None
         phrase = _quote(" ".join(words)) + ("*" if prefix else "")
-        verify = _text_regex(text) if re.search(r"[^\w\s]", text) else None
+        verify = _text_regex(text) if re.search(r"[^\w\s]", text) or len(text.split()) > 1 else None
         return phrase, verify
 
     marked = "".join(text if kind == "text" else ("\x01" if kind == "any" else "\x02") for kind, text in term.pieces)
@@ -138,6 +152,14 @@ def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term,
             parts.append(_quote(word) + ("*" if prefix and len(word) > 1 else ""))
     if not parts:
         return None, None
+    if len(marked.split()) > 1:
+        # Several words: a phrase. "annual review" must be these words next to each other, with
+        # only white space between them ("annual.review" or "review annual" do not count); the
+        # words in any place are "annual+review".
+        if "\x01" not in marked and "\x02" not in marked:
+            tokens = re.findall(r"\w+", marked)
+            return _quote(" ".join(tokens)) + ("*" if prefix else ""), _phrase_regex(marked, prefix)
+        return " AND ".join(parts), _phrase_regex(marked, prefix)
     return " AND ".join(parts), None
 
 
