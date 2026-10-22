@@ -15,8 +15,9 @@ import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
 import { HighlightTerm, parseFindText, plainSearchText } from '../utils/query';
+import { DEFAULT_SEARCH_OPTIONS, SearchOptions } from '../utils/searchOptions';
 import { ACTIONS, bindingParts, eventToBinding, Keymap, matches } from '../utils/keymap';
-import { HitReport, HitsContext } from './VirtualGrid';
+import { HitReport, HitsContext, JumpContext } from './VirtualGrid';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
 // Quick Look grows out of the selected row and sharpens from a blur (matrix ref R03 Blur Reveal).
@@ -32,6 +33,7 @@ interface QuickLookModalProps {
   onCopyPath: (item: SearchItem) => void;
   terms: HighlightTerm[];
   keymap: Keymap;
+  searchOptions?: SearchOptions;
 }
 
 export const QuickLookModal: React.FC<QuickLookModalProps> = ({
@@ -45,6 +47,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onCopyPath,
   terms,
   keymap,
+  searchOptions = DEFAULT_SEARCH_OPTIONS,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<PreviewPayload | null>(null);
@@ -184,13 +187,15 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const findRef = useRef<HTMLInputElement>(null);
   const findOpenRef = useRef(false);
   findOpenRef.current = findOpen;
-  const findTerms = useMemo(() => parseFindText(findText), [findText]);
+  const findTerms = useMemo(() => parseFindText(findText, searchOptions), [findText, searchOptions]);
   const searchTermsKey = JSON.stringify(terms);
   const activeTerms = useMemo(
     () => (findOpen && findTerms.length ? findTerms : terms),
     [findOpen, findTerms, searchTermsKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const termsKey = JSON.stringify(activeTerms);
+  // Find always goes to its first hit; the search terms only when the settings say so
+  const jumpFirst = (findOpen && findTerms.length > 0) || searchOptions.preview_jump;
 
   const typesIntoFind = (e: KeyboardEvent) => {
     if (e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.altKey || e.metaKey) return false;
@@ -241,7 +246,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       setHits(found);
       setHitIndex(0);
       paintHits(found, 0);
-      if (found.length && firstRun) revealRange(found[0]);
+      if (found.length && firstRun && jumpFirst) revealRange(found[0]);
       firstRun = firstRun && !found.length;
     };
     // Views that render later (sheet tabs, chapters, large code) change the DOM: scan again
@@ -256,7 +261,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       cancelAnimationFrame(raf);
       window.clearTimeout(timer);
     };
-  }, [data, raw, editing, termsKey, isTableView]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, raw, editing, termsKey, isTableView, jumpFirst]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => clearHits(), []);
 
@@ -288,7 +293,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         e.preventDefault();
         e.stopPropagation();
         startEdit();
-      } else if (typesIntoFind(e)) {
+      } else if (searchOptions.type_to_find && typesIntoFind(e)) {
         // Type to find: letters go to the find box (also the ones typed before it has the focus)
         e.preventDefault();
         e.stopPropagation();
@@ -466,6 +471,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           </button>
         </div>
 
+        <JumpContext.Provider value={jumpFirst}>
         <HitsContext.Provider value={setTableHits}>
         <div className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
           {loading && current && <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden loading-line z-10" />}
@@ -530,6 +536,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           </div>
         </div>
         </HitsContext.Provider>
+        </JumpContext.Provider>
 
         <div className="flex items-center justify-between gap-3 h-9 px-4 shrink-0 text-[11.5px] text-fg-3" style={{ borderTop: '1px solid var(--line)' }}>
           <div className="flex items-center gap-3 num">

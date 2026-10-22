@@ -35,12 +35,61 @@ was read, and the **?** button in the search field lists these examples.
 | `.xlsx:[total, tax]` | Text around the brackets applies to every element (`[invoice, receipt]+.pdf` too) |
 | `tot*l`, `rec?ipt` | Wildcards: `*` any characters, `?` one character (in text: inside a word) |
 | `/e-mail`, `"e-mail"` | `/` (the rest) or quotes: literal text. Works everywhere: `invoice:/total+tax` |
+| `invoice;dm 2024;size>1mb` | Filters after `;` (dates and size, below) |
 
 `+` (and outside brackets `,`) joins parts that must all hit; `-` starts a part that must not hit.
 A `-` between two digits (`2024-05`) is just a character; for other names with a dash use `/` or
 quotes. Several extensions mean any of them. Inside brackets a `/` literal ends at the next comma
-or `]`. `C:\...` is a path, not a `:` search. All results can be scrolled: the next hits load
-while you scroll.
+or `]`, and everywhere at the next `;`. `C:\...` is a path, not a `:` search. All results can be
+scrolled: the next hits load while you scroll.
+
+### Filters: dates and size (after `;`)
+
+Each `;` starts a filter; filters apply to every group. `dm` is the date modified, `dc` created,
+`da` accessed (`modified`, `created`, `accessed` work too), `size` the file size.
+
+| Type | Finds |
+|---|---|
+| `;dm from 01-03-2024 to 31-03-2024` | Modified in March 2024; both days count |
+| `;dc from 2023` | Created on 1 January 2023 or later (no end) |
+| `;da to 15-06` | Accessed on 15 June this year or before (no start; the whole day counts) |
+| `;dm 2024-05`, `;dm may 2024`, `;dm 2024` | Modified in that month or year |
+| `;dm 01.03.2024..15.03.2024`, `;dm 01-03-2024 - 15-03-2024` | Ranges without "from" |
+| `;dm before 2020`, `;dm after 31-12-2025`, `;dm >=2025` | Before or after a date (`<`, `<=`, `>`, `>=`, `=`) |
+| `;dm 7d`, `;dm since 2w`, `;dm >3m` | In the last 7 days, the last 2 weeks; older than 3 months (h, d, w, m, y) |
+| `;dm today`, `yesterday`, `this week`, `last month`, `this year` | Named periods |
+| `;size>10mb`, `;size<=1.5 gb`, `;size<500kb` | Sizes in b, kb, mb, gb, tb (1 kb = 1024 bytes; `1,5` works too) |
+| `;size from 1mb to 50mb`, `;size 1mb..50mb` | Size ranges, both ends included |
+| `;size=10mb` | About 10 MB (9.5 to 10.5 MB) |
+| `;size small` | Windows size names: empty, tiny, small, medium, large, huge, gigantic |
+
+Dates: `15-03-2024`, `15.03.2024`, `15/03/24`, `2024-03-15`, `20240315`, `15-03` (this year),
+`03-2024`, `2024-03`, `2024`, and month names in English or Latvian (`15 mar 2024`,
+`march 2024`, `15. marts 2024`). Numbers are read day-month-year; month-day-year and year first
+can be chosen in the search settings, and a date that only works the other way round (like
+`03/15/2024`) is read that way. A filter that cannot be read shows as a red chip and is left out.
+The created and accessed dates come from the next scan after the update; Windows may not keep
+accessed dates up to date (it is a Windows setting).
+
+**Search settings** (… menu > Search settings, or Ctrl+.): everything above can be changed.
+
+- **Smart search on or off:** the **Smart** button in the search field, or Alt+S. Off: the
+  search field is plain text; no sign has a meaning and nothing is a filter.
+- **Words search in:** file names (default), the text inside files, or names and text. This also
+  applies when smart search is off.
+- **Signs:** every sign can be another punctuation character or turned off (empty): text `:`,
+  every part `+`, leave out `-` (anywhere, or only at a word start like `memo -draft`),
+  literal `/`, groups `[` `,` `]`, filters `;`. A sign can have only one meaning; the panel says
+  when two clash. Dates can be read day-month-year, month-day-year, or year first.
+- **Rules:** `.xlsx` as a type filter, `invoice.xlsx` as the whole name, wildcards, quotes, comma
+  outside a group, names that also match folder names, text words that match word beginnings.
+- **Results:** order (best match, newest, oldest, name, size), rows per page, the wait after
+  typing, text snippets, the chips, and whether groups start open.
+- **Pasting cells from Excel:** open the table, search at once, or paste as text; values in file
+  names or text; expandable rows or together.
+- **Quick Look:** mark the hits, scroll to the first hit, typing starts Find.
+- **Presets:** Smart (default), Smart with words in names and text, Classic (names and text, no
+  special characters), File names only (no special characters), Smart with words in the text.
 
 **Search a list:** paste cells from Excel (several rows or columns) into the search field, or
 press Ctrl+L. A table opens: edit, remove, or add values, choose **File names** or **Text**, and
@@ -70,6 +119,7 @@ Every save copies the old version to `data\backups` (last 200), refuses a file t
 |---|---|---|
 | `hotkey` | `"alt+space"` | Global key that shows or hides the window |
 | `shortcuts` | (none) | In-app keys that you changed, for example `{"move_down": ["ArrowDown", "J"]}`. Missing actions use the defaults |
+| `search` | (none) | Search settings that you changed (see Search settings above), for example `{"enabled": false}` or `{"default_scope": "both", "and_char": "&"}` |
 | `open_on_mouse_monitor` | `true` | Open the window on the screen with the mouse pointer. A remembered position on a screen that is off or unplugged is never used |
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
 | `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
@@ -102,7 +152,7 @@ Output in `release\`:
 - `PeekGrep.exe` is one self-extracting file (about 39 MB). On the first start it unpacks `PeekGrep\` next to itself. Later starts launch at once. A newer exe replaces `runtime\` and `app\` and keeps `data\`.
 - `PeekGrep\` is the unpacked portable folder (about 104 MB), with a plain launcher.
 
-Tests (73): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
+Tests (115): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 
 ## Motion references (from the motion reference matrix)
 

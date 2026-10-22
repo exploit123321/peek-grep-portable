@@ -151,6 +151,24 @@ class SettingsStore:
             self.save()
 
     @property
+    def search_options(self):
+        """How the smart search reads the search field ("search" in settings.json)."""
+        from app.search_options import merge
+        return merge(self._data.get("search"))
+
+    def set_search_options(self, options: Dict[str, Any]) -> None:
+        """Save only the options that differ from the defaults."""
+        from app.search_options import DEFAULTS
+        defaults = DEFAULTS.to_dict()
+        changed = {k: v for k, v in options.items() if k in defaults and defaults[k] != v}
+        with self._lock:
+            if changed:
+                self._data["search"] = changed
+            else:
+                self._data.pop("search", None)
+            self.save()
+
+    @property
     def open_on_mouse_monitor(self) -> bool:
         """Open the window on the screen with the mouse pointer (not on a screen that is off)."""
         return bool(self._data.get("open_on_mouse_monitor", True))

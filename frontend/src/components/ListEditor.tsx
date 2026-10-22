@@ -3,6 +3,7 @@ import { ClipboardList, Plus, Search, Trash2, X } from 'lucide-react';
 import { SegmentedControl } from './motion/SegmentedControl';
 import { AnimatedCheckbox } from './motion/AnimatedCheckbox';
 import { ListMode, listToQuery, ListWhere } from '../utils/query';
+import { DEFAULT_SEARCH_OPTIONS, SearchOptions } from '../utils/searchOptions';
 
 // Search a list: values pasted from Excel (one per cell or per row) open here as a table.
 // Edit, remove, or add values, then search them in file names or in the text, as expandable
@@ -15,6 +16,7 @@ interface ListEditorProps {
   filter: string;
   source: 'paste' | 'edit' | 'new';
   onConfirm: (values: string[], mode: ListMode, where: ListWhere, filter: string) => void;
+  options?: SearchOptions;
   onClose: () => void;
 }
 
@@ -64,12 +66,12 @@ const SPLITS = [
   { id: 'rows' as const, label: 'Each row', hint: 'The cells of a row are one value' },
 ];
 
-export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode, where: initialWhere, filter: initialFilter, source, onConfirm, onClose }) => {
+export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode, where: initialWhere, filter: initialFilter, source, onConfirm, onClose, options = DEFAULT_SEARCH_OPTIONS }) => {
   const columns = useMemo(() => Math.max(0, ...grid.map(r => r.length)), [grid]);
   const [split, setSplit] = useState<Split>('cells');
   const [{ values, duplicates }, setState] = useState(() => valuesFrom(grid, 'cells'));
-  const [mode, setMode] = useState<ListMode>(initialMode);
-  const [where, setWhere] = useState<ListWhere>(initialWhere);
+  const [mode, setMode] = useState<ListMode>(options.group_open ? initialMode : 'together');
+  const [where, setWhere] = useState<ListWhere>(options.text_char ? initialWhere : 'names');
   const [filter, setFilter] = useState(initialFilter);
   const inputs = useRef<Map<number, HTMLInputElement>>(new Map());
   const focusId = useRef<number | null>(null);
@@ -99,7 +101,7 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
   };
 
   const active = values.filter(v => v.on && v.text.trim()).map(v => v.text);
-  const preview = listToQuery(active, mode, where, filter);
+  const preview = listToQuery(active, mode, where, filter, options);
   const confirm = () => {
     if (active.length) onConfirm(active, mode, where, filter);
   };
@@ -145,11 +147,11 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
           <div className="flex items-center gap-2">
             <span className="label-caps">Look in</span>
-            <SegmentedControl options={WHERE} value={where} onChange={setWhere} size="sm" />
+            <SegmentedControl options={options.text_char ? WHERE : WHERE.slice(0, 1)} value={where} onChange={setWhere} size="sm" />
           </div>
           <div className="flex items-center gap-2">
             <span className="label-caps">Search as</span>
-            <SegmentedControl options={MODES} value={mode} onChange={setMode} size="sm" />
+            <SegmentedControl options={options.group_open ? MODES : MODES.slice(1)} value={mode} onChange={setMode} size="sm" />
           </div>
           {columns > 1 && (
             <div className="flex items-center gap-2">

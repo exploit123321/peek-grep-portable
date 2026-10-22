@@ -6,22 +6,26 @@ text conditions (FTS5 MATCH sub-queries). The full ranked list is kept for a few
 loads the next page without searching again; snippets are made only for the page.
 """
 
+import os
 import re
 import sqlite3
 import threading
 import time
 import unicodedata
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.indexer.db import (
     _filter_clause,
     compiled_regex as _compiled,
     escape_like,
+    folder_like_pattern,
     format_snippet,
     get_db_connection,
 )
+from app.params import Param
 from app.query import Element, QueryPlan, Term, explain, highlight_terms, parse_query
+from app.search_options import DEFAULTS, SearchOptions
 from app.schemas import SearchResultItem
 
 MAX_WILDCARD_TERMS = 256
@@ -105,14 +109,16 @@ def _wild_word(conn: sqlite3.Connection, db_path: Optional[str], word: str) -> O
     return "(" + " OR ".join(_quote(term) for _, term in found) + ")"
 
 
-def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term) -> Tuple[Optional[str], Optional[str]]:
-    """(FTS5 MATCH expression, regex the text must also contain). (None, None): cannot match."""
+def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term,
+                   prefix: bool = True) -> Tuple[Optional[str], Optional[str]]:
+    """(FTS5 MATCH expression, regex the text must also contain). (None, None): cannot match.
+    prefix: words also match longer words ("memo" finds "memos")."""
     if term.literal:
         text = term.text
         words = re.findall(r"\w+", text)
         if not words:
             return None, None
-        phrase = _quote(" ".join(words)) + "*"
+        phrase = _quote(" ".join(words)) + ("*" if prefix else "")
         verify = _text_regex(text) if re.search(r"[^\w\s]", text) else None
         return phrase, verify
 
@@ -129,7 +135,7 @@ def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term)
             parts.append(expr)
         else:
             # One letter matches whole words only: "a*" would hit nearly every file
-            parts.append(_quote(word) + ("*" if len(word) > 1 else ""))
+            parts.append(_quote(word) + ("*" if prefix and len(word) > 1 else ""))
     if not parts:
         return None, None
     return " AND ".join(parts), None
@@ -141,25 +147,51 @@ class _Search:
     """SQL and ranking for one element."""
 
     def __init__(self, conn: sqlite3.Connection, db_path: Optional[str], el: Element,
-                 type_filter: str, folder: Optional[str]):
+                 type_filter: str, folder: Optional[str], opts: SearchOptions = DEFAULTS,
+                 roots: Sequence[str] = (), params: Sequence[Param] = ()):
         self.conn = conn
         self.db_path = db_path
         self.el = el
         self.type_filter = type_filter
         self.folder = folder
+        self.opts = opts
+        self.roots = sorted((os.path.normpath(r) for r in roots), key=len, reverse=True)
+        self.params = list(params)
         self._fts: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
 
     # SQL pieces
 
+    def _relpath_sql(self) -> Tuple[str, List[Any]]:
+        """Path below the working folder (so a working folder named "Work" does not hit every file)."""
+        if not self.roots:
+            return "m.path", []
+        parts, params = [], []
+        for root in self.roots:
+            base = root if root.endswith(os.sep) else root + os.sep
+            parts.append("WHEN m.path LIKE ? ESCAPE '^' THEN substr(m.path, ?)")
+            params += [folder_like_pattern(root), len(base) + 1]
+        return "(CASE " + " ".join(parts) + " ELSE m.path END)", params
+
+    def relpath(self, path: str) -> str:
+        low = path.lower()
+        for root in self.roots:
+            base = root if root.endswith(os.sep) else root + os.sep
+            if low.startswith(base.lower()):
+                return path[len(base):]
+        return path
+
     def _name_sql(self, term: Term) -> Tuple[str, List[Any]]:
+        # With folder names on, a part of the name may also be a folder below the working folder
+        column, params = (self._relpath_sql() if self.opts.names_include_folders and not term.exact
+                          else ("m.filename", []))
         if term.text.isascii():
-            return "m.filename LIKE ? ESCAPE '^'", [_like_pattern(term)]
-        return "pg_regexp(?, m.filename)", [_name_regex(term)]
+            return f"{column} LIKE ? ESCAPE '^'", params + [_like_pattern(term)]
+        return f"pg_regexp(?, {column})", [_name_regex(term)] + params
 
     def fts(self, term: Term) -> Tuple[Optional[str], Optional[str]]:
         key = id(term)
         if key not in self._fts:
-            self._fts[key] = fts_expression(self.conn, self.db_path, term)
+            self._fts[key] = fts_expression(self.conn, self.db_path, term, self.opts.text_prefix)
         return self._fts[key]
 
     def _content_sql(self, term: Term) -> Tuple[str, List[Any]]:
@@ -173,8 +205,15 @@ class _Search:
             params.append(verify)
         return sql + ")", params
 
-    def _term_sql(self, term: Term, in_name: bool) -> Tuple[str, List[Any]]:
-        sql, params = self._name_sql(term) if in_name else self._content_sql(term)
+    def _term_sql(self, term: Term, where: str) -> Tuple[str, List[Any]]:
+        if where == "name":
+            sql, params = self._name_sql(term)
+        elif where == "text":
+            sql, params = self._content_sql(term)
+        else:  # name or text
+            a, pa = self._name_sql(term)
+            b, pb = self._content_sql(term)
+            sql, params = f"({a} OR {b})", pa + pb
         if term.negated:
             if term.exts:
                 marks = ",".join("?" for _ in term.exts)
@@ -191,9 +230,18 @@ class _Search:
         if el.exclude_exts:
             clause += f" AND m.extension NOT IN ({','.join('?' for _ in el.exclude_exts)})"
             params += el.exclude_exts
-        for terms, in_name in ((el.name_terms, True), (el.content_terms, False)):
+        # Filters after ";": dates and size (low included, high excluded)
+        for param in self.params:
+            column = {"mtime": "m.mtime", "ctime": "m.ctime", "atime": "m.atime", "size": "m.size_bytes"}[param.field]
+            if param.low is not None:
+                clause += f" AND {column} >= ?"
+                params.append(param.low)
+            if param.high is not None:
+                clause += f" AND {column} < ?"
+                params.append(param.high)
+        for terms, where in ((el.name_terms, "name"), (el.content_terms, "text"), (el.any_terms, "any")):
             for term in terms:
-                sql, p = self._term_sql(term, in_name)
+                sql, p = self._term_sql(term, where)
                 clause += f" AND {sql}"
                 params += p
         return clause, params
@@ -201,22 +249,28 @@ class _Search:
     # ranking
 
     def name_terms(self) -> List[Term]:
-        return [t for t in self.el.name_terms if not t.negated]
+        return [t for t in self.el.name_terms + self.el.any_terms if not t.negated]
 
     def text_expression(self) -> Optional[str]:
         """One OR expression of the positive text terms (for bm25 and snippets)."""
-        terms = [t for t in self.el.content_terms if not t.negated]
+        terms = [t for t in self.el.content_terms + self.el.any_terms if not t.negated]
         exprs = [e for e in (self.fts(t)[0] for t in terms) if e]
         if not exprs:
             return None
         return " OR ".join(f"({e})" for e in exprs)
 
+    _ORDER_SQL = {
+        "best": "m.mtime DESC", "newest": "m.mtime DESC", "oldest": "m.mtime ASC",
+        "name": "m.filename COLLATE NOCASE ASC", "size": "m.size_bytes DESC",
+    }
+
     def filtered_page(self, start: int, size: int) -> Tuple[int, List[Dict[str, Any]]]:
-        """Searches without positive terms (empty, ".xlsx", "-draft"): newest files first, paged in SQL."""
+        """Searches without positive terms (empty, ".xlsx", "-draft"): newest first (or the chosen order), paged in SQL."""
         clause, params = self.where()
         total = self.conn.execute(f"SELECT COUNT(*) FROM files_meta m WHERE 1=1 {clause};", params).fetchone()[0]
         rows = self.conn.execute(
-            f"SELECT {_META_COLUMNS} FROM files_meta m WHERE 1=1 {clause} ORDER BY m.mtime DESC LIMIT ? OFFSET ?;",
+            f"SELECT {_META_COLUMNS} FROM files_meta m WHERE 1=1 {clause} "
+            f"ORDER BY {self._ORDER_SQL.get(self.opts.sort, 'm.mtime DESC')} LIMIT ? OFFSET ?;",
             (*params, size, start),
         ).fetchall()
         return total, [{**dict(r), "score": 0.0, "match_type": "all"} for r in rows]
@@ -254,6 +308,8 @@ class _Search:
                         total += 80.0
                     elif rx.search(fname):
                         total += 60.0
+                    elif self.opts.names_include_folders and rx.search(self.relpath(item["path"])):
+                        total += 40.0
                 name_score = total / len(matchers)
             content_score = max(10.0, 50.0 - bm25[item["path"]] * 5.0) if item["path"] in bm25 else 0.0
             if name_score and content_score:
@@ -266,10 +322,22 @@ class _Search:
                 item["match_type"] = "filename"
                 item["score"] = name_score
             results.append(item)
-        results.sort(key=lambda x: (x["score"], x["mtime"]), reverse=True)
+        sort = self.opts.sort
+        if sort == "newest":
+            results.sort(key=lambda x: x["mtime"], reverse=True)
+        elif sort == "oldest":
+            results.sort(key=lambda x: x["mtime"])
+        elif sort == "name":
+            results.sort(key=lambda x: x["filename"].lower())
+        elif sort == "size":
+            results.sort(key=lambda x: x["size_bytes"], reverse=True)
+        else:
+            results.sort(key=lambda x: (x["score"], x["mtime"]), reverse=True)
         return results
 
     def snippets(self, items: List[Dict[str, Any]]) -> Dict[str, str]:
+        if not self.opts.show_snippets:
+            return {}
         paths = [i["path"] for i in items if i["match_type"] in ("content", "both")]
         expr = self.text_expression()
         if not paths or not expr:
@@ -342,15 +410,18 @@ def run_search(
     group: Optional[int] = None,
     group_limit: int = 25,
     db_path: Optional[str] = None,
+    options: SearchOptions = DEFAULTS,
+    roots: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Search one page. Grouped queries ([a, b]) return the first page of every group,
     or with group=N the next page of group N."""
     conn = get_db_connection(db_path)
-    plan: QueryPlan = parse_query(query or "")
-    base_key = (db_path, query, type_filter, folder)
+    plan: QueryPlan = parse_query(query or "", options)
+    roots = list(roots or [])
+    base_key = (db_path, query, type_filter, folder, tuple(roots), options.key())
 
     def page_of(index: int, el: Element, start: int, size: int) -> Dict[str, Any]:
-        search = _Search(conn, db_path, el, type_filter, folder)
+        search = _Search(conn, db_path, el, type_filter, folder, options, roots, plan.params)
         if el.positive_terms:
             ranked = _ranked_cached(search, base_key + (index,), fresh=start == 0)
             total, page = len(ranked), ranked[start:start + size]
@@ -365,7 +436,7 @@ def run_search(
             "highlight": highlight_terms(el),
         }
 
-    response: Dict[str, Any] = {"grouped": plan.grouped, "explain": explain(plan)}
+    response: Dict[str, Any] = {"grouped": plan.grouped, "explain": explain(plan) if options.enabled else []}
     if plan.grouped and group is None:
         groups = [page_of(k, el, 0, group_limit) for k, el in enumerate(plan.elements)]
         response.update(groups=groups, total=sum(g["total"] for g in groups), offset=0,

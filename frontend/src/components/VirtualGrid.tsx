@@ -17,6 +17,9 @@ export interface HitReport {
 /** Quick Look listens here for hits in table views (the DOM has only the visible rows). */
 export const HitsContext = createContext<(report: HitReport | null) => void>(() => {});
 
+/** False: new hits are marked, but the table does not scroll to the first one. */
+export const JumpContext = createContext(true);
+
 interface VirtualGridProps {
   columns: string[];
   rows: string[][];
@@ -81,6 +84,7 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const report = useContext(HitsContext);
+  const jump = useContext(JumpContext);
 
   // Hits from the data: per term the whole term, or its words when the whole term has no hit
   const { hits, regexes } = useMemo(() => {
@@ -119,7 +123,7 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
   // New hits: go to the first one
   useEffect(() => {
     setHitIndex(0);
-    if (hits.length) requestAnimationFrame(() => scrollToCell(hits[0][0], hits[0][1]));
+    if (hits.length && jump) requestAnimationFrame(() => scrollToCell(hits[0][0], hits[0][1]));
   }, [hits]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

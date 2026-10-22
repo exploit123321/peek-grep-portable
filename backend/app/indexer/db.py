@@ -101,7 +101,9 @@ def init_db(db_path: Optional[str] = None) -> None:
                 is_text INTEGER NOT NULL,
                 category TEXT NOT NULL,
                 fts_indexed INTEGER NOT NULL DEFAULT 0,
-                seen_at REAL NOT NULL DEFAULT 0
+                seen_at REAL NOT NULL DEFAULT 0,
+                ctime REAL NOT NULL DEFAULT 0,
+                atime REAL NOT NULL DEFAULT 0
             );
         """)
         # Columns added after the first release
@@ -110,6 +112,11 @@ def init_db(db_path: Optional[str] = None) -> None:
             cur.execute("ALTER TABLE files_meta ADD COLUMN fts_indexed INTEGER NOT NULL DEFAULT 0;")
         if "seen_at" not in existing:
             cur.execute("ALTER TABLE files_meta ADD COLUMN seen_at REAL NOT NULL DEFAULT 0;")
+        # Created and accessed times (for ;dc and ;da): the modified time until the next scan
+        for column in ("ctime", "atime"):
+            if column not in existing:
+                cur.execute(f"ALTER TABLE files_meta ADD COLUMN {column} REAL NOT NULL DEFAULT 0;")
+                cur.execute(f"UPDATE files_meta SET {column} = mtime;")
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_filename ON files_meta(filename COLLATE NOCASE);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_category ON files_meta(category);")
@@ -176,9 +183,13 @@ def upsert_file(
     category: str,
     content: Optional[str] = None,
     db_path: Optional[str] = None,
+    ctime: Optional[float] = None,
+    atime: Optional[float] = None,
 ) -> None:
     """Insert or update a single file record and its full-text content."""
     upsert_files_batch([{
+        "ctime": ctime,
+        "atime": atime,
         "path": path,
         "filename": filename,
         "extension": extension,
@@ -216,6 +227,8 @@ def upsert_files_batch(
             it["category"],
             fts_flag,
             it.get("seen_at", now),
+            it.get("ctime") or it["mtime"],
+            it.get("atime") or it["mtime"],
         ))
         # Decoupled FTS handling: only modify FTS5 table if content was extracted
         if content_val:
@@ -225,8 +238,9 @@ def upsert_files_batch(
     def _upsert(cur: sqlite3.Cursor) -> None:
         # A changed file (new mtime or size) goes back to the content queue
         cur.executemany("""
-            INSERT INTO files_meta (path, filename, extension, size_bytes, mtime, is_text, category, fts_indexed, seen_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO files_meta (path, filename, extension, size_bytes, mtime, is_text, category, fts_indexed, seen_at,
+                                    ctime, atime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
                 extension = excluded.extension,
@@ -235,6 +249,8 @@ def upsert_files_batch(
                 is_text = excluded.is_text,
                 category = excluded.category,
                 seen_at = excluded.seen_at,
+                ctime = excluded.ctime,
+                atime = excluded.atime,
                 fts_indexed = CASE
                     WHEN excluded.fts_indexed = 1 THEN 1
                     WHEN excluded.mtime != files_meta.mtime OR excluded.size_bytes != files_meta.size_bytes THEN 0
@@ -452,6 +468,7 @@ def search_files(
     limit: int = 50,
     db_path: Optional[str] = None,
     folder: Optional[str] = None,
+    options: Any = None,
 ) -> List[SearchResultItem]:
     """First page of a search (smart search syntax, see app/query.py). Groups are joined.
     mode="content" searches the text (like ":query"); otherwise the query decides."""
@@ -459,7 +476,10 @@ def search_files(
 
     if mode == "content" and ":" not in query:
         query = ":" + query
-    res = run_search(query, type_filter=type_filter, folder=folder, limit=limit, group_limit=limit, db_path=db_path)
+    from app.search_options import DEFAULTS
+
+    res = run_search(query, type_filter=type_filter, folder=folder, limit=limit, group_limit=limit, db_path=db_path,
+                     options=options or DEFAULTS)
     if res["grouped"]:
         return [item for g in res["groups"] for item in g["results"]]
     return res["results"]

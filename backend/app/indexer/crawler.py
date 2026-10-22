@@ -217,6 +217,9 @@ def build_file_record(
             "extension": ext,
             "size_bytes": size,
             "mtime": mtime,
+            # Windows: creation time (st_birthtime from Python 3.12, st_ctime before)
+            "ctime": getattr(stat_obj, "st_birthtime", None) or stat_obj.st_ctime,
+            "atime": stat_obj.st_atime,
             "is_text": is_text,
             "category": category,
             "content": content,

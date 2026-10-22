@@ -4,7 +4,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 export type ActionId =
-  | 'focus_search' | 'clear' | 'list_editor' | 'shortcuts' | 'folders'
+  | 'focus_search' | 'clear' | 'list_editor' | 'shortcuts' | 'folders' | 'toggle_smart' | 'search_settings'
   | 'category_1' | 'category_2' | 'category_3' | 'category_4' | 'category_5'
   | 'move_down' | 'move_up' | 'preview' | 'open' | 'reveal' | 'copy_path'
   | 'expand' | 'collapse' | 'expand_all'
@@ -25,6 +25,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'focus_search', label: 'Go to the search field', section: 'Search', context: 'results', defaults: ['Ctrl+K', 'Ctrl+F'] },
   { id: 'clear', label: 'Clear the search, leave the folder, hide', section: 'Search', context: 'results', defaults: ['Escape'] },
   { id: 'list_editor', label: 'Search a list (paste from Excel)', section: 'Search', context: 'results', defaults: ['Ctrl+L'] },
+  { id: 'toggle_smart', label: 'Smart search on or off', section: 'Search', context: 'results', defaults: ['Alt+S'] },
   { id: 'category_1', label: 'Type: All', section: 'Search', context: 'results', defaults: ['Ctrl+1'] },
   { id: 'category_2', label: 'Type: Code', section: 'Search', context: 'results', defaults: ['Ctrl+2'] },
   { id: 'category_3', label: 'Type: Docs', section: 'Search', context: 'results', defaults: ['Ctrl+3'] },
@@ -49,6 +50,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'save_edit', label: 'Save the edit', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+S'] },
 
   { id: 'shortcuts', label: 'Keyboard shortcuts', section: 'Window', context: 'results', defaults: ['Ctrl+,'] },
+  { id: 'search_settings', label: 'Search settings', section: 'Window', context: 'results', defaults: ['Ctrl+.'] },
   { id: 'folders', label: 'Working folders', section: 'Window', context: 'results', defaults: [] },
 ];
 

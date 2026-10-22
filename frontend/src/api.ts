@@ -1,6 +1,7 @@
 // Typed calls to the local backend and to the desktop window bridge (pywebview).
 
 import type { HighlightTerm } from './utils/query';
+import type { SearchOptions, SearchPreset } from './utils/searchOptions';
 
 export type Category = 'all' | 'code' | 'docs' | 'data' | 'media';
 export type Delimiter = 'auto' | 'comma' | 'semicolon' | 'tab' | 'colon' | 'pipe' | 'space';
@@ -18,7 +19,7 @@ export interface SearchItem {
 }
 
 export interface ExplainChip {
-  kind: 'ext' | 'not-ext' | 'name' | 'not-name' | 'exact' | 'not-exact' | 'text' | 'not-text' | 'groups';
+  kind: 'ext' | 'not-ext' | 'name' | 'not-name' | 'exact' | 'not-exact' | 'text' | 'not-text' | 'any' | 'not-any' | 'groups' | 'param' | 'param-error';
   text: string;
   literal: boolean;
 }
@@ -50,6 +51,9 @@ export interface AppSettings {
   default_hotkey: string;
   shortcuts: Record<string, string[]>;
   can_set_hotkey: boolean;
+  search: SearchOptions;
+  search_defaults: SearchOptions;
+  search_presets: SearchPreset[];
 }
 
 export interface SearchParams {
@@ -177,6 +181,7 @@ export const api = {
   settings: () => request<AppSettings>('/api/settings'),
   saveShortcuts: (body: { hotkey?: string; shortcuts?: Record<string, string[]> }) =>
     post<AppSettings>('/api/settings/shortcuts', body, 'PUT'),
+  saveSearchSettings: (options: Partial<SearchOptions>) => post<AppSettings>('/api/settings/search', options, 'PUT'),
   preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto', quick = false) =>
     request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}${quick ? '&quick=true' : ''}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),

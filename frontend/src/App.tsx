@@ -9,17 +9,17 @@ import { Onboarding } from './components/Onboarding';
 import { FoldersPanel } from './components/FoldersPanel';
 import { ListEditor } from './components/ListEditor';
 import { ShortcutsPanel } from './components/ShortcutsPanel';
+import { SearchSettingsPanel } from './components/SearchSettingsPanel';
 import { chipsWorthShowing, QueryChips } from './components/QueryHints';
 import { ToastProvider, useToast } from './components/Toasts';
 import { SegmentedControl } from './components/motion/SegmentedControl';
 import { RollingNumber } from './components/motion/RollingNumber';
 import { folderLabel } from './utils/paths';
 import { HighlightTerm, ListMode, listToQuery, ListWhere, parseClipboardGrid, isListPaste } from './utils/query';
+import { canWriteLists, DEFAULT_SEARCH_OPTIONS, SearchOptions } from './utils/searchOptions';
 import { ActionId, bindingParts, buildKeymap, DEFAULT_KEYMAP, eventToBinding, isTypingKey, Keymap, keymapOverrides } from './utils/keymap';
 
 type View = 'loading' | 'onboarding' | 'search';
-
-const PAGE = 60;
 
 const CATEGORIES = [
   { id: 'all' as const, label: 'All', icon: Layers, hint: 'All file types' },
@@ -80,6 +80,8 @@ function Workspace() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYMAP);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
+  const [searchOpts, setSearchOpts] = useState<SearchOptions>(DEFAULT_SEARCH_OPTIONS);
   const [listEditor, setListEditor] = useState<{ grid: string[][]; mode: ListMode; where: ListWhere; filter: string; source: 'paste' | 'edit' | 'new' } | null>(null);
   const [pasted, setPasted] = useState<PastedList | null>(null);
 
@@ -120,6 +122,7 @@ function Workspace() {
       .then(s => {
         setSettings(s);
         setKeymap(buildKeymap(s.shortcuts));
+        if (s.search) setSearchOpts(s.search);
       })
       .catch(() => {});
   }, []);
@@ -175,7 +178,8 @@ function Workspace() {
       const gen = ++searchGen.current;
       setBusy(true);
       try {
-        const keep = refresh ? Math.min(500, Math.max(PAGE, flatRef.current.items.length)) : PAGE;
+        const page = searchOpts.page_size;
+        const keep = refresh ? Math.min(500, Math.max(page, flatRef.current.items.length)) : page;
         const res = await api.search({ q: query, type: category, folder: scope, limit: keep }, ctrl.signal);
         if (gen !== searchGen.current) return;
         if (res.grouped) {
@@ -184,8 +188,13 @@ function Workspace() {
           })));
           setFlat(EMPTY_LIST);
           if (!refresh) {
-            // One group opens by itself; several start closed, like drop-downs
-            setExpanded(prev => (res.groups.length === 1 ? new Set([res.groups[0].label]) : new Set([...prev].filter(l => res.groups.some(g => g.label === l)))));
+            // As set: one group opens by itself and several start closed, or all open, or all closed
+            const labels = res.groups.map(g => g.label);
+            setExpanded(prev => {
+              if (searchOpts.groups_open === 'all') return new Set(labels);
+              if (searchOpts.groups_open === 'none') return new Set([...prev].filter(l => labels.includes(l)));
+              return labels.length === 1 ? new Set(labels) : new Set([...prev].filter(l => labels.includes(l)));
+            });
           }
         } else {
           setGroups(null);
@@ -199,12 +208,12 @@ function Workspace() {
       } finally {
         if (!ctrl.signal.aborted) setBusy(false);
       }
-    }, query ? 110 : 0);
+    }, query ? searchOpts.search_delay_ms : 0);
     return () => {
       ctrl.abort();
       window.clearTimeout(timer);
     };
-  }, [query, category, scope, view, refreshTick]);
+  }, [query, category, scope, view, refreshTick, searchOpts]);
 
   // Next page of the whole list (group null) or of one group
   const loadMore = useCallback(async (group: number | null) => {
@@ -217,13 +226,13 @@ function Workspace() {
     };
     update(l => ({ ...l, loading: true }));
     try {
-      const res = await api.search({ q: query, type: category, folder: scope, offset: list.items.length, limit: PAGE, group });
+      const res = await api.search({ q: query, type: category, folder: scope, offset: list.items.length, limit: searchOpts.page_size, group });
       if (gen !== searchGen.current) return;
       update(l => ({ ...l, items: appendUnique(l.items, res.results), total: res.total, hasMore: res.has_more, loading: false }));
     } catch {
       if (gen === searchGen.current) update(l => ({ ...l, loading: false, hasMore: false }));
     }
-  }, [query, category, scope]);
+  }, [query, category, scope, searchOpts.page_size]);
 
   // Rows on screen: files, or group rows with their files when open
   const rows = useMemo<Row[]>(() => {
@@ -360,19 +369,43 @@ function Workspace() {
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  const overlayOpen = foldersOpen || shortcutsOpen || listEditor !== null;
+  const overlayOpen = foldersOpen || shortcutsOpen || searchSettingsOpen || listEditor !== null;
 
   const openListEditor = useCallback((grid: string[][], source: 'paste' | 'edit' | 'new') => {
-    setListEditor({ grid, source, mode: pasted?.mode ?? 'groups', where: pasted?.where ?? 'names', filter: pasted?.filter ?? '' });
-  }, [pasted]);
+    setListEditor({
+      grid, source,
+      mode: pasted?.mode ?? searchOpts.list_mode,
+      where: pasted?.where ?? searchOpts.list_where,
+      filter: pasted?.filter ?? '',
+    });
+  }, [pasted, searchOpts.list_mode, searchOpts.list_where]);
 
   const confirmList = (values: string[], listMode: ListMode, where: ListWhere, filter: string) => {
-    const q = listToQuery(values, listMode, where, filter);
+    const q = listToQuery(values, listMode, where, filter, searchOpts);
     setPasted({ values, mode: listMode, where, filter, query: q });
     setQuery(q);
     setListEditor(null);
     requestAnimationFrame(() => inputRef.current?.focus());
   };
+
+  /** Cells pasted from Excel: the table, a search at once, or plain text (as set). */
+  const pasteList = useCallback((grid: string[][], source: 'paste' | 'edit' | 'new' = 'paste') => {
+    const cells = grid.flat().map(c => c.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!canWriteLists(searchOpts) || searchOpts.paste_list === 'text') {
+      setQuery(q => (q.trim() ? `${q.trim()} ` : '') + cells.join(' '));
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    if (searchOpts.paste_list === 'groups' && source === 'paste') {
+      const seen = new Set<string>();
+      const values = cells.filter(c => !seen.has(c.toLowerCase()) && seen.add(c.toLowerCase()));
+      const q = listToQuery(values, searchOpts.list_mode, searchOpts.list_where, '', searchOpts);
+      setPasted({ values, mode: searchOpts.list_mode, where: searchOpts.list_where, filter: '', query: q });
+      setQuery(q);
+      return;
+    }
+    openListEditor(grid, source);
+  }, [searchOpts, openListEditor]);
 
   // Paste while the list (not a text field) has the focus: a list opens the table, text goes to the search
   useEffect(() => {
@@ -384,7 +417,7 @@ function Workspace() {
       const text = e.clipboardData?.getData('text/plain') ?? '';
       if (!text) return;
       e.preventDefault();
-      if (isListPaste(text)) openListEditor(parseClipboardGrid(text), 'paste');
+      if (isListPaste(text)) pasteList(parseClipboardGrid(text));
       else {
         setQuery(q => q + text.replace(/[\r\n]+/g, ' ').trim());
         inputRef.current?.focus();
@@ -392,7 +425,7 @@ function Workspace() {
     };
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
-  }, [view, overlayOpen, quickLook.open, openListEditor]);
+  }, [view, overlayOpen, quickLook.open, pasteList]);
 
   // Keyboard model (keys from the keymap): arrows move, Space previews, Enter opens, Esc steps back
   useEffect(() => {
@@ -429,8 +462,10 @@ function Workspace() {
         inputRef.current?.select();
         return;
       }
-      if (is('list_editor')) { stop(); openListEditor(pasted ? pasted.values.map(v => [v]) : [], pasted ? 'edit' : 'new'); return; }
+      if (is('list_editor') && canWriteLists(searchOpts)) { stop(); openListEditor(pasted ? pasted.values.map(v => [v]) : [], pasted ? 'edit' : 'new'); return; }
       if (is('shortcuts')) { stop(); setShortcutsOpen(true); return; }
+      if (is('search_settings')) { stop(); setSearchSettingsOpen(true); return; }
+      if (is('toggle_smart')) { stop(); saveSearchOptions({ ...searchOpts, enabled: !searchOpts.enabled }, true); return; }
       if (is('folders')) { stop(); setFoldersOpen(true); return; }
       if (is('expand_all') && groups) { stop(); toggleAllGroups(); return; }
       if (is('clear')) {
@@ -482,7 +517,7 @@ function Workspace() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, overlayOpen, quickLook.open, query, scope, keymap, groups, pasted, selected, selectedRow, selectedItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook, toggleGroup, toggleAllGroups, openListEditor]);
+  }, [view, overlayOpen, quickLook.open, query, scope, keymap, groups, pasted, selected, selectedRow, selectedItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook, toggleGroup, toggleAllGroups, openListEditor, searchOpts]);
 
   // Corner grip to resize the frameless window
   const startResize = (e: React.PointerEvent) => {
@@ -531,6 +566,21 @@ function Workspace() {
     }
   };
 
+  /** Save search settings; returns an error message or null. toast: say what changed (quick toggle). */
+  const saveSearchOptions = async (next: SearchOptions, quick = false): Promise<string | null> => {
+    try {
+      const s = await api.saveSearchSettings(next);
+      setSettings(s);
+      setSearchOpts(s.search);
+      toast(quick ? `Smart search ${s.search.enabled ? 'on' : 'off'}` : 'Search settings saved', 'info');
+      return null;
+    } catch (e) {
+      const message = (e as Error).message;
+      if (quick) toast(message, 'error');
+      return message;
+    }
+  };
+
   const indexing = status?.phase === 'scanning' || status?.phase === 'reading';
   const pastedVisible = pasted && pasted.query === query ? pasted : null;
   const allOpen = !!groups && groups.length > 0 && groups.every(g => expanded.has(g.label));
@@ -562,10 +612,18 @@ function Workspace() {
         <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
           {category !== 'all' && <button type="button" className="btn !h-7" onClick={() => setCategory('all')}>Search all types</button>}
           {scope && <button type="button" className="btn !h-7" onClick={() => setScope(null)}>Search all folders</button>}
-          {!query.includes(':') && (
-            <button type="button" className="btn !h-7" onClick={() => setQuery(`:${query}`)} title="Without “:” only file names are searched">
-              Search the text: <span className="font-mono">:{query.length > 24 ? `${query.slice(0, 24)}…` : query}</span>
+          {searchOpts.enabled && searchOpts.default_scope === 'names' && searchOpts.text_char && !query.includes(searchOpts.text_char) && (
+            <button
+              type="button"
+              className="btn !h-7"
+              onClick={() => setQuery(`${searchOpts.text_char}${query}`)}
+              title={`Without “${searchOpts.text_char}” only file names are searched`}
+            >
+              Search the text: <span className="font-mono">{searchOpts.text_char}{query.length > 24 ? `${query.slice(0, 24)}…` : query}</span>
             </button>
+          )}
+          {!searchOpts.enabled && searchOpts.default_scope !== 'both' && (
+            <button type="button" className="btn !h-7" onClick={() => setSearchSettingsOpen(true)}>Search settings…</button>
           )}
           {status?.phase === 'reading' && <span className="text-[12px] text-fg-3">Text is still being read in some files.</span>}
         </div>
@@ -598,6 +656,7 @@ function Workspace() {
         onMaximize={() => api.toggleMaximize()}
         onOpenDataFolder={() => api.openDataFolder()}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenSearchSettings={() => setSearchSettingsOpen(true)}
         onQuit={() => api.quit()}
       />
 
@@ -631,8 +690,12 @@ function Workspace() {
               busy={busy}
               inputRef={inputRef}
               listKey={keymap.list_editor[0]}
-              onPasteList={grid => openListEditor(grid, 'paste')}
-              onOpenList={() => openListEditor(pastedVisible ? pastedVisible.values.map(v => [v]) : [], pastedVisible ? 'edit' : 'new')}
+              onPasteList={grid => pasteList(grid)}
+              onOpenList={canWriteLists(searchOpts) ? () => openListEditor(pastedVisible ? pastedVisible.values.map(v => [v]) : [], pastedVisible ? 'edit' : 'new') : undefined}
+              searchOptions={searchOpts}
+              onToggleSmart={() => saveSearchOptions({ ...searchOpts, enabled: !searchOpts.enabled }, true)}
+              onOpenSearchSettings={() => setSearchSettingsOpen(true)}
+              smartKey={keymap.toggle_smart[0]}
             />
 
             {pastedVisible ? (
@@ -684,7 +747,7 @@ function Workspace() {
                 </button>
               </div>
             ) : (
-              chipsWorthShowing(chips) && query && <QueryChips chips={chips} />
+              searchOpts.show_chips && chipsWorthShowing(chips, searchOpts) && query && <QueryChips chips={chips} />
             )}
 
             <div className="flex items-center justify-between gap-3">
@@ -758,8 +821,9 @@ function Workspace() {
           onOpen={openItem}
           onReveal={revealItem}
           onCopyPath={copyPath}
-          terms={termsFor(selectedRow?.kind === 'item' ? selectedRow.group : null)}
+          terms={searchOpts.preview_highlight ? termsFor(selectedRow?.kind === 'item' ? selectedRow.group : null) : []}
           keymap={keymap}
+          searchOptions={searchOpts}
         />
       )}
 
@@ -782,8 +846,22 @@ function Workspace() {
           filter={listEditor.filter}
           source={listEditor.source}
           onConfirm={confirmList}
+          options={searchOpts}
           onClose={() => {
             setListEditor(null);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+      )}
+
+      {searchSettingsOpen && settings && (
+        <SearchSettingsPanel
+          options={searchOpts}
+          defaults={settings.search_defaults}
+          presets={settings.search_presets}
+          onSave={next => saveSearchOptions(next)}
+          onClose={() => {
+            setSearchSettingsOpen(false);
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
         />

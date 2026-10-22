@@ -36,6 +36,8 @@ async def search(
             limit=limit,
             group=group,
             group_limit=min(limit, 25),
+            options=settings_store.search_options,
+            roots=settings_store.folders(),
         )
 
     return SearchResponse(

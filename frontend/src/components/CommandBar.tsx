@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ClipboardList, Folder, FolderTree, Search, X } from 'lucide-react';
 import { folderLabel } from '../utils/paths';
 import { isListPaste, parseClipboardGrid } from '../utils/query';
-import { SyntaxHelp } from './QueryHints';
+import { scopeWords, SyntaxHelp } from './QueryHints';
+import { SearchOptions } from '../utils/searchOptions';
+import { bindingParts } from '../utils/keymap';
 
 // Command-palette search field (matrix ref R41 Command Menu). A folder scope shows as a
 // breadcrumb chip with a stacked layer behind the bar; Backspace on an empty field
@@ -17,10 +19,26 @@ interface CommandBarProps {
   busy: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
   onPasteList: (grid: string[][]) => void;
-  onOpenList: () => void;
+  onOpenList?: () => void;
   listKey?: string;
+  searchOptions: SearchOptions;
+  onToggleSmart: () => void;
+  onOpenSearchSettings: () => void;
+  smartKey?: string;
 }
 
+
+/** Placeholder with examples written with the signs from the settings. */
+function placeholder(o: SearchOptions, scope: string | null): string {
+  const where = scopeWords(o);
+  const head = scope ? `Search ${where} in ${folderLabel(scope)}…` : `Search ${where}`;
+  if (!o.enabled) return head;
+  const hints: string[] = [];
+  if (o.text_char && o.default_scope === 'names') hints.push(`${o.text_char}text inside files`);
+  if (o.text_char && o.extensions) hints.push(`.xlsx${o.text_char}total`);
+  if (o.and_char && o.extensions) hints.push(`invoice${o.and_char}.pdf`);
+  return [head, ...hints.slice(0, scope ? 1 : 3)].join('   ·   ');
+}
 
 export const CommandBar: React.FC<CommandBarProps> = ({
   query,
@@ -33,6 +51,10 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   onPasteList,
   onOpenList,
   listKey,
+  searchOptions: o,
+  onToggleSmart,
+  onOpenSearchSettings,
+  smartKey,
 }) => {
   const [scopeOpen, setScopeOpen] = useState(false);
   const scopeRef = useRef<HTMLDivElement>(null);
@@ -114,7 +136,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
               onPasteList(parseClipboardGrid(text));
             }
           }}
-          placeholder={scope ? `Search file names in ${folderLabel(scope)}…   :text` : 'Search file names   ·   :text inside files   ·   .xlsx:total   invoice+.pdf'}
+          placeholder={placeholder(o, scope)}
           className="flex-1 min-w-0 h-full bg-transparent text-[16px] text-fg placeholder:text-fg-3 outline-none select-text"
           autoFocus
           spellCheck={false}
@@ -182,10 +204,25 @@ export const CommandBar: React.FC<CommandBarProps> = ({
           </div>
         )}
 
-        <button type="button" className="icon-btn shrink-0" onClick={onOpenList} title={`Search a list of values${listKey ? ` (${listKey})` : ''}. You can also paste cells from Excel.`}>
-          <ClipboardList className="w-4 h-4" />
+        <button
+          type="button"
+          onClick={onToggleSmart}
+          className="shrink-0 flex items-center gap-1.5 h-7 px-2 rounded-md text-[11.5px] font-medium transition-colors hover:bg-surface-2"
+          style={{ color: o.enabled ? 'var(--accent)' : 'var(--text-3)' }}
+          title={`Smart search ${o.enabled ? 'on' : 'off'}: click to turn it ${o.enabled ? 'off' : 'on'}${smartKey ? ` (${bindingParts(smartKey).join('+')})` : ''}`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: o.enabled ? 'var(--accent)' : 'var(--text-3)' }} />
+          Smart
         </button>
+        {onOpenList && (
+          <button type="button" className="icon-btn shrink-0" onClick={onOpenList} title={`Search a list of values${listKey ? ` (${listKey})` : ''}. You can also paste cells from Excel.`}>
+            <ClipboardList className="w-4 h-4" />
+          </button>
+        )}
         <SyntaxHelp
+          options={o}
+          onToggleSmart={onToggleSmart}
+          onOpenSettings={onOpenSearchSettings}
           listKey={listKey}
           onInsert={text => {
             onQueryChange(text);

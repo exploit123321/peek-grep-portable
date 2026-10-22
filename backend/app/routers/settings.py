@@ -1,4 +1,5 @@
-"""Keyboard shortcuts: the global show/hide key and the in-app keys, saved in data\\settings.json."""
+"""Settings the app can change: keyboard shortcuts (the global show/hide key and the in-app keys)
+and the search settings. Saved in data\\settings.json."""
 
 import re
 from typing import Any, Dict, List, Optional
@@ -7,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from app.indexer.smart_search import clear_cache
+from app.search_options import DEFAULTS, PRESET_LABELS, PRESETS, validate
 from app.settings import DEFAULT_HOTKEY
 from app.state import desktop_hooks, settings_store
 
@@ -41,6 +44,9 @@ def _settings() -> Dict[str, Any]:
         "default_hotkey": DEFAULT_HOTKEY,
         "shortcuts": settings_store.shortcuts,
         "can_set_hotkey": desktop_hooks.get("set_hotkey") is not None,
+        "search": settings_store.search_options.to_dict(),
+        "search_defaults": DEFAULTS.to_dict(),
+        "search_presets": [{"id": k, "label": PRESET_LABELS[k], "options": v} for k, v in PRESETS.items()],
     }
 
 
@@ -69,4 +75,19 @@ async def save_shortcuts(payload: ShortcutsUpdate) -> Dict[str, Any]:
                 except Exception as e:
                     raise HTTPException(status_code=400, detail=f"Windows did not accept {hotkey}: {e}")
             settings_store.set_hotkey(hotkey)
+    return _settings()
+
+
+@router.put("/settings/search")
+async def save_search_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Search settings: unknown keys are refused, missing keys keep their current value."""
+    unknown = [k for k in payload if k not in DEFAULTS.to_dict()]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown search setting: {', '.join(unknown)}.")
+    merged = {**settings_store.search_options.to_dict(), **payload}
+    cleaned, errors = validate(merged)
+    if errors:
+        raise HTTPException(status_code=400, detail=" ".join(errors))
+    settings_store.set_search_options(cleaned)
+    clear_cache()
     return _settings()
