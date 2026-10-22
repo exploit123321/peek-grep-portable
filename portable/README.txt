@@ -27,7 +27,9 @@ PORTABLE
     runtime\   Python runtime (only what the app needs)
     app\       the program
     data\      your settings, the index, the log, and the window cache
-- The app writes nothing to the registry and nothing to the Startup folder.
+- The app writes nothing to the registry and nothing to the Startup folder. Only if you turn
+  on "Start with Windows" (Settings, or the tray menu) it adds one value for your user under
+  HKCU\Software\Microsoft\Windows\CurrentVersion\Run. Turning it off removes it again.
 - To move the app, move the complete folder (and PeekGrep.exe, if it is next to it).
 - If the folder is on a USB drive that gets another drive letter, folders on that drive
   are moved to the new letter automatically.

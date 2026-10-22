@@ -22,6 +22,7 @@ desktop_hooks: Dict[str, Optional[Callable[..., Any]]] = {
     "open_data_folder": None,
     "quit": None,
     "set_hotkey": None,
+    "set_autostart": None,
 }
 
 

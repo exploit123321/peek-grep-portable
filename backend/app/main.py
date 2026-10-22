@@ -36,6 +36,7 @@ set_pick_folders_callback = _set_hook("pick_folders")
 set_open_data_folder_callback = _set_hook("open_data_folder")
 set_quit_callback = _set_hook("quit")
 set_hotkey_callback = _set_hook("set_hotkey")
+set_autostart_callback = _set_hook("set_autostart")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

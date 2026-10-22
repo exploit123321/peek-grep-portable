@@ -47,6 +47,8 @@ def _settings() -> Dict[str, Any]:
         "search": settings_store.search_options.to_dict(),
         "search_defaults": DEFAULTS.to_dict(),
         "search_presets": [{"id": k, "label": PRESET_LABELS[k], "options": v} for k, v in PRESETS.items()],
+        "app": settings_store.app_settings(),
+        "autostart_available": desktop_hooks.get("set_autostart") is not None,
     }
 
 
@@ -90,4 +92,26 @@ async def save_search_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=" ".join(errors))
     settings_store.set_search_options(cleaned)
     clear_cache()
+    return _settings()
+
+
+@router.put("/settings/app")
+async def save_app_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Start with Windows, start in the tray, the screen to open on, and freeing memory in the tray."""
+    keys = settings_store.APP_KEYS
+    bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, bool)]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unknown or not true/false: {', '.join(bad)}.")
+    before = settings_store.app_settings()
+    after = {**before, **payload}
+    if (after["start_with_windows"], after["start_hidden"]) != (before["start_with_windows"], before["start_hidden"]):
+        hook = desktop_hooks.get("set_autostart")
+        if hook is None and after["start_with_windows"]:
+            raise HTTPException(status_code=400, detail="Start with Windows works in the desktop app only.")
+        if hook is not None:
+            try:
+                await run_in_threadpool(hook, after["start_with_windows"], after["start_hidden"])
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Windows did not accept the startup entry: {e}")
+    settings_store.set_app_settings(payload)
     return _settings()

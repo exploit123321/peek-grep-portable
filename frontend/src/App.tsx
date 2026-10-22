@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ClipboardList, FileCode2, FileText, Image as ImageIcon, Layers, Pencil, SearchX, Sheet, Sparkles, X } from 'lucide-react';
-import { api, AppSettings, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
+import { api, AppOptions, AppSettings, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
 import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
 import { ResultsList, Row } from './components/ResultsList';
@@ -10,6 +10,7 @@ import { FoldersPanel } from './components/FoldersPanel';
 import { ListEditor } from './components/ListEditor';
 import { ShortcutsPanel } from './components/ShortcutsPanel';
 import { SearchSettingsPanel } from './components/SearchSettingsPanel';
+import { AppSettingsPanel } from './components/AppSettingsPanel';
 import { chipsWorthShowing, QueryChips } from './components/QueryHints';
 import { ToastProvider, useToast } from './components/Toasts';
 import { SegmentedControl } from './components/motion/SegmentedControl';
@@ -81,6 +82,7 @@ function Workspace() {
   const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYMAP);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [searchOpts, setSearchOpts] = useState<SearchOptions>(DEFAULT_SEARCH_OPTIONS);
   const [listEditor, setListEditor] = useState<{ grid: string[][]; mode: ListMode; where: ListWhere; filter: string; source: 'paste' | 'edit' | 'new' } | null>(null);
   const [pasted, setPasted] = useState<PastedList | null>(null);
@@ -369,7 +371,7 @@ function Workspace() {
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  const overlayOpen = foldersOpen || shortcutsOpen || searchSettingsOpen || listEditor !== null;
+  const overlayOpen = foldersOpen || shortcutsOpen || searchSettingsOpen || appSettingsOpen || listEditor !== null;
 
   const openListEditor = useCallback((grid: string[][], source: 'paste' | 'edit' | 'new') => {
     setListEditor({
@@ -581,6 +583,18 @@ function Workspace() {
     }
   };
 
+  /** App settings (start with Windows and window options): saved at once; returns an error or null. */
+  const saveAppOptions = async (values: Partial<AppOptions>): Promise<string | null> => {
+    try {
+      const s = await api.saveAppSettings(values);
+      setSettings(s);
+      if ('start_with_windows' in values) toast(s.app.start_with_windows ? 'Starts with Windows' : 'Does not start with Windows', 'info');
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+
   const indexing = status?.phase === 'scanning' || status?.phase === 'reading';
   const pastedVisible = pasted && pasted.query === query ? pasted : null;
   const allOpen = !!groups && groups.length > 0 && groups.every(g => expanded.has(g.label));
@@ -657,6 +671,7 @@ function Workspace() {
         onOpenDataFolder={() => api.openDataFolder()}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onOpenSearchSettings={() => setSearchSettingsOpen(true)}
+        onOpenSettings={() => setAppSettingsOpen(true)}
         onQuit={() => api.quit()}
       />
 
@@ -849,6 +864,19 @@ function Workspace() {
           options={searchOpts}
           onClose={() => {
             setListEditor(null);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+      )}
+
+      {appSettingsOpen && settings && (
+        <AppSettingsPanel
+          settings={settings}
+          onChange={saveAppOptions}
+          onOpenSearchSettings={() => { setAppSettingsOpen(false); setSearchSettingsOpen(true); }}
+          onOpenShortcuts={() => { setAppSettingsOpen(false); setShortcutsOpen(true); }}
+          onClose={() => {
+            setAppSettingsOpen(false);
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
         />

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FolderCog, FolderOpen, Keyboard, Maximize2, Minus, MoreHorizontal, Power, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
+import { FolderCog, FolderOpen, Keyboard, Maximize2, Minus, MoreHorizontal, Power, RefreshCw, Settings, SlidersHorizontal, X } from 'lucide-react';
 import { IndexerStatus } from '../api';
 import { RollingNumber } from './motion/RollingNumber';
 import { baseName } from '../utils/paths';
@@ -14,6 +14,7 @@ interface TitleBarProps {
   onOpenDataFolder: () => void;
   onOpenShortcuts: () => void;
   onOpenSearchSettings: () => void;
+  onOpenSettings: () => void;
   onQuit: () => void;
 }
 
@@ -58,6 +59,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onOpenDataFolder,
   onOpenShortcuts,
   onOpenSearchSettings,
+  onOpenSettings,
   onQuit,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -136,6 +138,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             >
               {showFolderButton && menuItem(<FolderCog className="w-4 h-4" />, 'Working folders…', onOpenFolders)}
               {showFolderButton && menuItem(<RefreshCw className="w-4 h-4" />, 'Re-index all folders', onReindexAll)}
+              {menuItem(<Settings className="w-4 h-4" />, 'Settings…', onOpenSettings)}
               {showFolderButton && menuItem(<SlidersHorizontal className="w-4 h-4" />, 'Search settings…', onOpenSearchSettings)}
               {showFolderButton && menuItem(<Keyboard className="w-4 h-4" />, 'Keyboard shortcuts…', onOpenShortcuts)}
               {menuItem(<FolderOpen className="w-4 h-4" />, 'Open data folder', onOpenDataFolder)}

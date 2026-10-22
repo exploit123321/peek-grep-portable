@@ -1,0 +1,46 @@
+"""App settings: start with Windows (through the desktop hook), the tray start, and window options."""
+
+from fastapi.testclient import TestClient
+
+from app.main import app, set_autostart_callback
+from app.state import desktop_hooks, settings_store
+
+client = TestClient(app)
+
+
+def test_start_with_windows_uses_the_desktop_hook():
+    calls = []
+    set_autostart_callback(lambda enabled, hidden: calls.append((enabled, hidden)))
+    try:
+        body = client.get("/api/settings").json()
+        assert body["app"]["start_with_windows"] is False and body["autostart_available"] is True
+        res = client.put("/api/settings/app", json={"start_with_windows": True})
+        assert res.status_code == 200 and res.json()["app"]["start_with_windows"] is True
+        assert calls == [(True, True)]
+        client.put("/api/settings/app", json={"start_hidden": False})
+        assert calls[-1] == (True, False)
+        # Settings that do not touch the startup entry do not call the hook
+        client.put("/api/settings/app", json={"open_on_mouse_monitor": False})
+        assert len(calls) == 2 and settings_store.open_on_mouse_monitor is False
+        assert client.put("/api/settings/app", json={"start_with_windows": "yes"}).status_code == 400
+        assert client.put("/api/settings/app", json={"bogus": True}).status_code == 400
+    finally:
+        client.put("/api/settings/app", json={"start_with_windows": False, "start_hidden": True, "open_on_mouse_monitor": True})
+        desktop_hooks["set_autostart"] = None
+    assert calls[-1] == (False, True)
+
+
+def test_refused_entry_keeps_the_setting():
+    def refuse(enabled, hidden):
+        raise PermissionError("access denied")
+    set_autostart_callback(refuse)
+    try:
+        res = client.put("/api/settings/app", json={"start_with_windows": True})
+        assert res.status_code == 400 and settings_store.start_with_windows is False
+    finally:
+        desktop_hooks["set_autostart"] = None
+
+
+def test_without_desktop_window():
+    res = client.put("/api/settings/app", json={"start_with_windows": True})
+    assert res.status_code == 400 and settings_store.start_with_windows is False

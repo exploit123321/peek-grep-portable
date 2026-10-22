@@ -6,7 +6,7 @@ the working folders that the user selects on the first start.
 
 ## What changed from the original
 
-- **Portable:** a bundled, isolated Python 3.14 runtime (`runtime\`, with a `._pth` file). All state is in `data\` next to the app. No registry entries, no Startup shortcut. A free local port instead of 8000. One app per data folder: a second start shows the open window.
+- **Portable:** a bundled, isolated Python 3.14 runtime (`runtime\`, with a `._pth` file). All state is in `data\` next to the app. No registry entries (only the optional Start with Windows entry), no Startup shortcut. A free local port instead of 8000. One app per data folder: a second start shows the open window.
 - **Working folders first:** nothing is scanned, watched, previewed, or opened outside the allowed folders. The API returns 403 for other paths. Removing a folder deletes its index entries. A full rescan also removes deleted files. A changed file goes back to the text queue. Same-drive folders follow a new USB drive letter.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
 - **New UI** (React, Tailwind, no new packages). See the motion references below.
@@ -121,8 +121,13 @@ Every save copies the old version to `data\backups` (last 200), refuses a file t
 | `shortcuts` | (none) | In-app keys that you changed, for example `{"move_down": ["ArrowDown", "J"]}`. Missing actions use the defaults |
 | `search` | (none) | Search settings that you changed (see Search settings above), for example `{"enabled": false}` or `{"default_scope": "both", "and_char": "&"}` |
 | `open_on_mouse_monitor` | `true` | Open the window on the screen with the mouse pointer. A remembered position on a screen that is off or unplugged is never used |
+| `start_with_windows` | `false` | Start when you sign in to Windows: one value for your user in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, kept up to date when the folder moves, removed when you turn it off |
+| `start_hidden` | `true` | When Windows starts the app: stay in the tray (`true`) or open the window |
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
 | `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
+
+Change these in the app: **… > Settings** (start with Windows, the window), **Search settings**, and
+**Keyboard shortcuts**. Start with Windows is also in the tray menu.
 
 Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of the app can be
 changed there, also the global show/hide key, and the app saves them in this file at once.

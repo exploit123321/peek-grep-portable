@@ -2,10 +2,14 @@
 
 Runs the FastAPI search engine in a background thread on a free local port, serves the
 React interface, and opens a frameless WebView2 window. Everything the app writes goes
-into the portable data folder. It writes nothing to the registry or the Startup folder.
+into the portable data folder. It writes nothing to the registry, except the optional
+Start with Windows entry below, and nothing to the Startup folder.
 
 Command line:
     --hidden    start in the tray without showing the window
+
+Start with Windows (off by default, in the app's settings or the tray menu) adds one value to
+HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run; turning it off removes it again.
 """
 
 import ctypes
@@ -26,7 +30,7 @@ BACKEND_DIR = CURRENT_DIR / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.config import APP_VERSION, DATA_DIR, LOG_PATH  # noqa: E402
+from app.config import APP_HOME, APP_VERSION, DATA_DIR, LOG_PATH  # noqa: E402
 
 APP_TITLE = "Peek & Grep"
 INSTANCE_FILE = DATA_DIR / "instance.json"
@@ -101,6 +105,7 @@ from app.main import (  # noqa: E402
     app,
     set_get_window_size_callback,
     set_hide_window_callback,
+    set_autostart_callback,
     set_hotkey_callback,
     set_open_data_folder_callback,
     set_pick_folders_callback,
@@ -483,6 +488,57 @@ class DesktopApi:
         threading.Timer(0.1, exit_application).start()
 
 
+# -- start with Windows ----------------------------------------------------------------
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def autostart_name() -> str:
+    """One value per copy of the app (per data folder), so two copies do not overwrite each other."""
+    return "PeekGrepPortable-" + format(zlib.crc32(str(DATA_DIR).lower().encode("utf-8")), "08x")
+
+
+def autostart_command(hidden: bool) -> str:
+    """The plain launcher of this folder (with the app icon), or the runtime directly."""
+    launcher = APP_HOME / "PeekGrep.exe"
+    if launcher.exists():
+        cmd = f'"{launcher}"'
+    else:
+        cmd = f'"{APP_HOME / "runtime" / "pythonw.exe"}" "{CURRENT_DIR / "desktop_app.py"}"'
+    return cmd + (" --hidden" if hidden else "")
+
+
+def set_autostart(enabled: bool, hidden: bool = True) -> None:
+    """Add or remove this app's value in the Run key of the current user."""
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        if enabled:
+            winreg.SetValueEx(key, autostart_name(), 0, winreg.REG_SZ, autostart_command(hidden))
+        else:
+            try:
+                winreg.DeleteValue(key, autostart_name())
+            except FileNotFoundError:
+                pass
+    print(f"[Desktop App] Start with Windows: {'on' if enabled else 'off'}")
+
+
+def sync_autostart() -> None:
+    """At every start: the entry follows the setting and the current folder (a moved folder or USB drive)."""
+    try:
+        set_autostart(settings_store.start_with_windows, settings_store.start_hidden)
+    except Exception as e:
+        print(f"[Desktop App] Could not update the startup entry: {e}")
+
+
+def toggle_autostart(icon=None, item=None) -> None:
+    enabled = not settings_store.start_with_windows
+    try:
+        set_autostart(enabled, settings_store.start_hidden)
+        settings_store.set_app_settings({"start_with_windows": enabled})
+    except Exception as e:
+        message_box(f"Windows did not accept the startup entry:\n{e}", flags=0x10)
+
+
 # -- tray and hotkey -----------------------------------------------------------------
 
 def generate_tray_icon() -> Image.Image:
@@ -505,6 +561,7 @@ def setup_tray():
         pystray.MenuItem(lambda item: f"Show / hide ({hotkey_label()})", lambda: toggle_window(), default=True),
         pystray.MenuItem("Working folders...", lambda: open_folders_panel()),
         pystray.MenuItem("Re-index all folders...", confirm_and_reindex),
+        pystray.MenuItem("Start with Windows", toggle_autostart, checked=lambda item: settings_store.start_with_windows),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Window size", pystray.Menu(
             pystray.MenuItem("Compact (880 x 620)", lambda: resize_window(880, 620)),
@@ -622,6 +679,7 @@ def main():
     set_open_data_folder_callback(open_data_folder)
     set_quit_callback(exit_application)
     set_hotkey_callback(register_hotkey)
+    set_autostart_callback(set_autostart)
 
     if not wait_for_backend(server_port):
         message_box("The search engine did not start. See app.log in the data folder.", flags=0x10)
@@ -631,6 +689,7 @@ def main():
 
     setup_tray()
     setup_global_hotkey()
+    sync_autostart()
 
     dist_index = CURRENT_DIR / "frontend" / "dist" / "index.html"
     target_url = f"http://127.0.0.1:{server_port}/" if dist_index.exists() else "http://127.0.0.1:5173/"

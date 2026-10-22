@@ -54,6 +54,15 @@ export interface AppSettings {
   search: SearchOptions;
   search_defaults: SearchOptions;
   search_presets: SearchPreset[];
+  app: AppOptions;
+  autostart_available: boolean;
+}
+
+export interface AppOptions {
+  start_with_windows: boolean;
+  start_hidden: boolean;
+  open_on_mouse_monitor: boolean;
+  release_window_on_hide: boolean;
 }
 
 export interface SearchParams {
@@ -182,6 +191,7 @@ export const api = {
   saveShortcuts: (body: { hotkey?: string; shortcuts?: Record<string, string[]> }) =>
     post<AppSettings>('/api/settings/shortcuts', body, 'PUT'),
   saveSearchSettings: (options: Partial<SearchOptions>) => post<AppSettings>('/api/settings/search', options, 'PUT'),
+  saveAppSettings: (options: Partial<AppOptions>) => post<AppSettings>('/api/settings/app', options, 'PUT'),
   preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto', quick = false) =>
     request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}${quick ? '&quick=true' : ''}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),

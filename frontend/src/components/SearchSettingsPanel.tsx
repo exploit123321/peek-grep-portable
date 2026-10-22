@@ -15,7 +15,7 @@ interface SearchSettingsPanelProps {
   onClose: () => void;
 }
 
-const Switch: React.FC<{ on: boolean; onChange: (v: boolean) => void; label: string; hint?: React.ReactNode; disabled?: boolean }> = ({
+export const Switch: React.FC<{ on: boolean; onChange: (v: boolean) => void; label: string; hint?: React.ReactNode; disabled?: boolean }> = ({
   on, onChange, label, hint, disabled,
 }) => (
   <button
@@ -42,7 +42,7 @@ const Switch: React.FC<{ on: boolean; onChange: (v: boolean) => void; label: str
   </button>
 );
 
-const Row: React.FC<{ label: string; hint?: React.ReactNode; children: React.ReactNode; disabled?: boolean }> = ({ label, hint, children, disabled }) => (
+export const Row: React.FC<{ label: string; hint?: React.ReactNode; children: React.ReactNode; disabled?: boolean }> = ({ label, hint, children, disabled }) => (
   <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 min-h-[40px] px-3 py-1.5 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}>
     <span className="flex-1 min-w-[180px]">
       <span className="block text-[13px] text-fg-2">{label}</span>
@@ -52,7 +52,7 @@ const Row: React.FC<{ label: string; hint?: React.ReactNode; children: React.Rea
   </div>
 );
 
-const Section: React.FC<{ title: string; children: React.ReactNode; note?: string }> = ({ title, children, note }) => (
+export const Section: React.FC<{ title: string; children: React.ReactNode; note?: string }> = ({ title, children, note }) => (
   <div className="mt-4">
     <div className="flex items-baseline gap-2 px-1 pb-1.5">
       <span className="label-caps">{title}</span>

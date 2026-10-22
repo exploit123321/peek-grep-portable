@@ -169,6 +169,28 @@ class SettingsStore:
             self.save()
 
     @property
+    def start_with_windows(self) -> bool:
+        """Start the app when you sign in to Windows (one entry in HKCU\\...\\Run, off by default)."""
+        return bool(self._data.get("start_with_windows", False))
+
+    @property
+    def start_hidden(self) -> bool:
+        """When Windows starts the app: stay in the tray (True) or open the window."""
+        return bool(self._data.get("start_hidden", True))
+
+    APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide")
+
+    def app_settings(self) -> Dict[str, bool]:
+        return {k: getattr(self, k) for k in self.APP_KEYS}
+
+    def set_app_settings(self, values: Dict[str, bool]) -> None:
+        with self._lock:
+            for k, v in values.items():
+                if k in self.APP_KEYS:
+                    self._data[k] = bool(v)
+            self.save()
+
+    @property
     def open_on_mouse_monitor(self) -> bool:
         """Open the window on the screen with the mouse pointer (not on a screen that is off)."""
         return bool(self._data.get("open_on_mouse_monitor", True))
