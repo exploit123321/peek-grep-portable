@@ -178,6 +178,20 @@ class SettingsStore:
         """When Windows starts the app: stay in the tray (True) or open the window."""
         return bool(self._data.get("start_hidden", True))
 
+    @property
+    def backups(self) -> Dict[str, Any]:
+        """Backups made when the editor saves ("backups" in settings.json)."""
+        from app.editing import BackupPolicy
+        return BackupPolicy.from_dict(self._data.get("backups")).to_dict()
+
+    def set_backups(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        from app.editing import BackupPolicy
+        policy = BackupPolicy.from_dict({**self.backups, **values}).to_dict()
+        with self._lock:
+            self._data["backups"] = policy
+            self.save()
+        return policy
+
     APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide")
 
     def app_settings(self) -> Dict[str, bool]:

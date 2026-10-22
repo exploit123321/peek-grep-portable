@@ -56,6 +56,30 @@ export interface AppSettings {
   search_presets: SearchPreset[];
   app: AppOptions;
   autostart_available: boolean;
+  backups: BackupOptions;
+}
+
+/** Backups when the editor saves: one per editing session (gap_minutes), a few kept per file. */
+export interface BackupOptions {
+  enabled: boolean;
+  per_file: number;
+  gap_minutes: number;
+}
+
+export interface BackupsInfo {
+  count: number;
+  bytes: number;
+  folder: string;
+}
+
+export interface SaveResult {
+  success: boolean;
+  mtime_ns: string;
+  /** The backup this save made, or null */
+  backup: string | null;
+  /** A recent backup kept instead of making a new one */
+  backup_kept: string | null;
+  indexed: boolean;
 }
 
 export interface AppOptions {
@@ -192,13 +216,17 @@ export const api = {
     post<AppSettings>('/api/settings/shortcuts', body, 'PUT'),
   saveSearchSettings: (options: Partial<SearchOptions>) => post<AppSettings>('/api/settings/search', options, 'PUT'),
   saveAppSettings: (options: Partial<AppOptions>) => post<AppSettings>('/api/settings/app', options, 'PUT'),
+  saveBackupSettings: (options: Partial<BackupOptions>) => post<AppSettings>('/api/settings/backups', options, 'PUT'),
+  backups: () => request<BackupsInfo>('/api/edit/backups'),
+  deleteBackups: () => post<BackupsInfo>('/api/edit/backups', undefined, 'DELETE'),
+  openBackups: () => post<BackupsInfo>('/api/edit/backups/open'),
   preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto', quick = false) =>
     request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}${quick ? '&quick=true' : ''}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),
   reveal: (path: string) => post<{ message: string }>('/api/actions/reveal', { path }),
   editLoad: (path: string) => request<EditModel>(`/api/edit?path=${encodeURIComponent(path)}`),
   editSave: (path: string, mtime_ns: string, payload: Record<string, unknown>) =>
-    post<{ success: boolean; mtime_ns: string; backup: string }>('/api/edit/save', { path, mtime_ns, payload }),
+    post<SaveResult>('/api/edit/save', { path, mtime_ns, payload }),
 
   async pickFolders(): Promise<string[] | null> {
     const d = desktop();

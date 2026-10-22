@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ClipboardList, FileCode2, FileText, Image as ImageIcon, Layers, Pencil, SearchX, Sheet, Sparkles, X } from 'lucide-react';
-import { api, AppOptions, AppSettings, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
+import { api, AppOptions, AppSettings, BackupOptions, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
 import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
 import { ResultsList, Row } from './components/ResultsList';
@@ -258,6 +258,11 @@ function Workspace() {
   const selected = found >= 0 ? found : rows.findIndex(r => r.kind !== 'more');
   const selectedRow = selected >= 0 ? rows[selected] : null;
   const selectedItem = selectedRow?.kind === 'item' ? selectedRow.item : null;
+  // Quick Look stays on its file when a refresh (after a save) takes it out of the results
+  const quickLookItemRef = useRef<SearchItem | null>(null);
+  if (found >= 0 && selectedItem) quickLookItemRef.current = selectedItem;
+  const keptItem = quickLookItemRef.current;
+  const quickLookItem = found < 0 && keptItem && selectedKey?.endsWith(`:${keptItem.path}`) ? keptItem : selectedItem;
   const totalFiles = groups ? groups.reduce((n, g) => n + g.total, 0) : flat.total;
 
   const termsFor = useCallback(
@@ -448,9 +453,9 @@ function Workspace() {
         if (inOtherField) return;
         if (is('close_preview') || is('preview')) { stop(); closeQuickLook(); }
         else if (is('move_down') || is('move_up')) { stop(); move(is('move_down') ? 1 : -1, true); }
-        else if (is('reveal') && selectedItem) { stop(); revealItem(selectedItem); }
-        else if (is('open') && selectedItem) { stop(); openItem(selectedItem); }
-        else if (is('copy_path') && !hasTextSelection && selectedItem) { stop(); copyPath(selectedItem); }
+        else if (is('reveal') && quickLookItem) { stop(); revealItem(quickLookItem); }
+        else if (is('open') && quickLookItem) { stop(); openItem(quickLookItem); }
+        else if (is('copy_path') && !hasTextSelection && quickLookItem) { stop(); copyPath(quickLookItem); }
         return;
       }
       if (inOtherField) return;
@@ -519,7 +524,7 @@ function Workspace() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, overlayOpen, quickLook.open, query, scope, keymap, groups, pasted, selected, selectedRow, selectedItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook, toggleGroup, toggleAllGroups, openListEditor, searchOpts]);
+  }, [view, overlayOpen, quickLook.open, query, scope, keymap, groups, pasted, selected, selectedRow, selectedItem, quickLookItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook, toggleGroup, toggleAllGroups, openListEditor, searchOpts]);
 
   // Corner grip to resize the frameless window
   const startResize = (e: React.PointerEvent) => {
@@ -589,6 +594,15 @@ function Workspace() {
       const s = await api.saveAppSettings(values);
       setSettings(s);
       if ('start_with_windows' in values) toast(s.app.start_with_windows ? 'Starts with Windows' : 'Does not start with Windows', 'info');
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+
+  const saveBackupOptions = async (values: Partial<BackupOptions>): Promise<string | null> => {
+    try {
+      setSettings(await api.saveBackupSettings(values));
       return null;
     } catch (e) {
       return (e as Error).message;
@@ -826,9 +840,9 @@ function Workspace() {
         </>
       )}
 
-      {quickLook.open && selectedItem && (
+      {quickLook.open && quickLookItem && (
         <QuickLookModal
-          item={selectedItem}
+          item={quickLookItem}
           originRect={quickLook.origin}
           folders={folders}
           position={qlPosition}
@@ -839,6 +853,7 @@ function Workspace() {
           terms={searchOpts.preview_highlight ? termsFor(selectedRow?.kind === 'item' ? selectedRow.group : null) : []}
           keymap={keymap}
           searchOptions={searchOpts}
+          onSaved={() => setRefreshTick(t => t + 1)}
         />
       )}
 
@@ -873,6 +888,7 @@ function Workspace() {
         <AppSettingsPanel
           settings={settings}
           onChange={saveAppOptions}
+          onBackupsChange={saveBackupOptions}
           onOpenSearchSettings={() => { setAppSettingsOpen(false); setSearchSettingsOpen(true); }}
           onOpenShortcuts={() => { setAppSettingsOpen(false); setShortcutsOpen(true); }}
           onClose={() => {

@@ -49,6 +49,7 @@ def _settings() -> Dict[str, Any]:
         "search_presets": [{"id": k, "label": PRESET_LABELS[k], "options": v} for k, v in PRESETS.items()],
         "app": settings_store.app_settings(),
         "autostart_available": desktop_hooks.get("set_autostart") is not None,
+        "backups": settings_store.backups,
     }
 
 
@@ -92,6 +93,21 @@ async def save_search_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=" ".join(errors))
     settings_store.set_search_options(cleaned)
     clear_cache()
+    return _settings()
+
+
+@router.put("/settings/backups")
+async def save_backup_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Backups when the editor saves: on/off, how many per file, and how often a new one is made."""
+    from app.editing import BackupPolicy
+    limits = BackupPolicy.LIMITS
+    for k, v in payload.items():
+        if k == "enabled" and isinstance(v, bool):
+            continue
+        if k in limits and isinstance(v, int) and not isinstance(v, bool) and limits[k][0] <= v <= limits[k][1]:
+            continue
+        raise HTTPException(status_code=400, detail=f"Not a valid backup setting: {k}.")
+    settings_store.set_backups(payload)
     return _settings()
 
 

@@ -1,31 +1,65 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, Settings, SlidersHorizontal, X } from 'lucide-react';
-import { AppOptions, AppSettings } from '../api';
+import { FolderOpen, Keyboard, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { api, AppOptions, AppSettings, BackupOptions, BackupsInfo } from '../api';
 import { SegmentedControl } from './motion/SegmentedControl';
-import { Row, Section, Switch } from './SearchSettingsPanel';
+import { NumberInput, Row, Section, Switch } from './SearchSettingsPanel';
 
-// App settings: start with Windows, how the window opens, and links to the other settings.
-// Each switch is saved at once (data\settings.json; the startup entry is in the Windows registry).
+// App settings: start with Windows, how the window opens, backups when the editor saves, and
+// links to the other settings. Each change is saved at once (data\settings.json; the startup
+// entry is in the Windows registry).
+
+const BACKUP_GAPS = [
+  { id: '0', label: 'Every save' },
+  { id: '10', label: '10 min' },
+  { id: '60', label: '1 hour' },
+  { id: '1440', label: '1 day' },
+] as const;
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 interface AppSettingsPanelProps {
   settings: AppSettings;
   onChange: (values: Partial<AppOptions>) => Promise<string | null>;
+  onBackupsChange: (values: Partial<BackupOptions>) => Promise<string | null>;
   onOpenSearchSettings: () => void;
   onOpenShortcuts: () => void;
   onClose: () => void;
 }
 
-export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, onChange, onOpenSearchSettings, onOpenShortcuts, onClose }) => {
+export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, onChange, onBackupsChange, onOpenSearchSettings, onOpenShortcuts, onClose }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => boxRef.current?.focus(), []);
   const o = settings.app;
+  const b = settings.backups;
+  const [info, setInfo] = useState<BackupsInfo | null>(null);
+  useEffect(() => {
+    api.backups().then(setInfo).catch(() => setInfo(null));
+  }, []);
 
   const change = async (values: Partial<AppOptions>) => {
     setBusy(true);
     setError(await onChange(values));
     setBusy(false);
+  };
+
+  const changeBackups = async (values: Partial<BackupOptions>) => {
+    setBusy(true);
+    setError(await onBackupsChange(values));
+    setBusy(false);
+  };
+
+  const backupAction = async (action: () => Promise<BackupsInfo>) => {
+    try {
+      setInfo(await action());
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   return (
@@ -98,6 +132,50 @@ export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, on
               label="Free memory in the tray"
               hint="About 110 MB instead of 300 MB while hidden; the window opens again at once"
             />
+          </Section>
+
+          <Section title="Backups when you save an edit">
+            <Switch
+              on={b.enabled}
+              onChange={v => changeBackups({ enabled: v })}
+              label="Back up a file before saving it"
+              hint="The version from before your edits goes to data\backups"
+            />
+            <Row
+              label="New backup"
+              hint="More saves within this time make none (a file changed by another program is always backed up)"
+              disabled={!b.enabled}
+            >
+              <SegmentedControl
+                options={[...BACKUP_GAPS]}
+                value={String(b.gap_minutes) as (typeof BACKUP_GAPS)[number]['id']}
+                onChange={v => changeBackups({ gap_minutes: Number(v) })}
+                size="sm"
+              />
+            </Row>
+            <Row label="Keep per file" hint="The oldest go" disabled={!b.enabled}>
+              <NumberInput
+                value={b.per_file}
+                onChange={v => Number.isInteger(v) && v >= 1 && v <= 50 && changeBackups({ per_file: v })}
+                min={1}
+                max={50}
+              />
+            </Row>
+            <Row label={info ? `${info.count} ${info.count === 1 ? 'backup' : 'backups'}${info.count ? `, ${formatBytes(info.bytes)}` : ''}` : 'Backups'}>
+              <button type="button" className="btn !h-7" onClick={() => backupAction(api.openBackups)} title={info?.folder}>
+                <FolderOpen className="w-3.5 h-3.5" /> Open folder
+              </button>
+              <button
+                type="button"
+                className="btn !h-7"
+                disabled={!info?.count}
+                onClick={() => {
+                  if (window.confirm(`Delete all ${info?.count} backups? Your files stay as they are.`)) backupAction(api.deleteBackups);
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete all
+              </button>
+            </Row>
           </Section>
 
           <Section title="More">

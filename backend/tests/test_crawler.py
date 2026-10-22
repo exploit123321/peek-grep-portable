@@ -220,3 +220,34 @@ def test_two_pass_pdf_fts_indexing_and_search(tmp_path):
     assert "Entanglement" in results[0].snippet or "Qubits" in results[0].snippet
 
 
+
+
+def test_watcher_treats_a_replaced_file_as_changed(tmp_path):
+    """Saving through a temporary file shows up on Windows as a delete; the file is still there."""
+    import time
+    from app.indexer.watcher import DebouncedChangeHandler
+    calls = []
+    handler = DebouncedChangeHandler(debounce_sec=0.05, roots=[str(tmp_path)])
+    import app.indexer.watcher as watcher
+    real_update, real_delete = watcher.process_single_file, watcher.delete_file
+    watcher.process_single_file = lambda path, db_path=None: calls.append(("update", path))
+    watcher.delete_file = lambda path, db_path=None: calls.append(("delete", path))
+    try:
+        kept, gone = tmp_path / "kept.txt", tmp_path / "gone.txt"
+        kept.write_text("new version", encoding="utf-8")
+
+        class Event:
+            is_directory = False
+
+            def __init__(self, path):
+                self.src_path = path
+
+        handler.on_deleted(Event(str(kept)))
+        handler.on_deleted(Event(str(gone)))
+        deadline = time.time() + 3
+        while len(calls) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+    finally:
+        handler.stop()
+        watcher.process_single_file, watcher.delete_file = real_update, real_delete
+    assert sorted(calls) == [("delete", str(gone)), ("update", str(kept))]

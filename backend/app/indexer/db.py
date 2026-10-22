@@ -396,6 +396,7 @@ def mark_files_fts_indexed(
 
         if skipped_paths:
             skip_tuples = [(p,) for p in skipped_paths]
+            cur.executemany("DELETE FROM files_content_fts WHERE path = ?;", skip_tuples)
             cur.executemany("UPDATE files_meta SET fts_indexed = 2 WHERE path = ?;", skip_tuples)
 
     _run_transaction(db_path, _mark)

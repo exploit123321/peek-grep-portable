@@ -209,3 +209,36 @@ def test_words_after_colon_are_a_phrase(tmp_path):
     from dataclasses import replace
     from app.search_options import DEFAULTS
     assert found(":annual review", options=replace(DEFAULTS, text_prefix=False)) == ["plain.txt"]
+
+
+def test_saved_edit_is_searchable_at_once(tmp_path):
+    from app.engine import IndexManager
+    from app.indexer.db import get_file_meta, upsert_files_batch
+    from app.indexer.crawler import build_file_record
+    from app.settings import SettingsStore
+
+    clear_cache()
+    db_file = str(tmp_path / "now.db")
+    init_db(db_file)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    note = folder / "plan.txt"
+    note.write_text("budget for the garden", encoding="utf-8")
+    upsert_files_batch([build_file_record(str(note))], db_path=db_file)
+    assert names(run_search(":garden", db_path=db_file)) == ["plan.txt"]
+
+    manager = IndexManager(SettingsStore(str(tmp_path / "settings.json")), db_path=db_file)
+    note.write_text("budget for the orchard", encoding="utf-8")
+    os.utime(note, (1_800_000_000, 1_800_000_000))
+    assert manager.index_file_now(str(note))
+    assert names(run_search(":orchard", db_path=db_file)) == ["plan.txt"]
+    assert names(run_search(":garden", db_path=db_file)) == []
+
+    # No text left: the old text is gone from the index too
+    note.write_text("", encoding="utf-8")
+    os.utime(note, (1_800_000_100, 1_800_000_100))
+    manager.index_file_now(str(note))
+    assert names(run_search(":orchard", db_path=db_file)) == []
+    assert get_file_meta(str(note), db_path=db_file)["fts_indexed"] == 2
+    # A file the index does not hold stays out
+    assert not manager.index_file_now(str(folder / "missing.txt"))

@@ -77,7 +77,7 @@ const CharInput: React.FC<{ value: string; onChange: (v: string) => void; title:
   />
 );
 
-const NumberInput: React.FC<{ value: number; onChange: (v: number) => void; min: number; max: number; unit?: string }> = ({ value, onChange, min, max, unit }) => (
+export const NumberInput: React.FC<{ value: number; onChange: (v: number) => void; min: number; max: number; unit?: string }> = ({ value, onChange, min, max, unit }) => (
   <span className="flex items-center gap-1.5">
     <input
       type="number"

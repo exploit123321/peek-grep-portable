@@ -12,7 +12,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from app.config import DATA_DIR, MAX_CONTENT_SIZE_BYTES
-from app.indexer.crawler import IndexerProgressTracker, SafeDriveCrawler, crawler_tracker
+from app.indexer.crawler import IndexerProgressTracker, SafeDriveCrawler, build_file_record, crawler_tracker
 from app.indexer.db import (
     count_files,
     count_files_in_folders,
@@ -20,10 +20,14 @@ from app.indexer.db import (
     count_unindexed_content_files,
     delete_folder,
     delete_outside_folders,
+    get_file_meta,
     init_db,
+    mark_files_fts_indexed,
     rebase_drive,
+    upsert_files_batch,
 )
 from app.indexer.fts_worker import PASS2_EXTENSIONS, FTSContentWorker, fts_worker_tracker
+from app.indexer.smart_search import clear_cache
 from app.indexer.watcher import FileWatcherManager
 from app.settings import SettingsStore, path_key
 
@@ -161,6 +165,26 @@ class IndexManager:
                     self._crawler = None
                 self._queued.pop(path_key(folder), None)
                 self.last_change = time.time()
+
+    def index_file_now(self, path: str) -> bool:
+        """Index one file at once, its name and its text (after a save in the editor), so a
+        search finds the new text without waiting for the watcher. Files the index skips stay out."""
+        if get_file_meta(path, db_path=self.db_path) is None:
+            return False
+        rec = build_file_record(path, extract_content=False)
+        if rec is None:
+            return False
+        upsert_files_batch([rec], db_path=self.db_path)
+        ext = rec["extension"]
+        if ext in PASS2_EXTENSIONS and rec["size_bytes"] <= MAX_CONTENT_SIZE_BYTES:
+            text = FTSContentWorker(db_path=self.db_path).extract_text_from_file(rec["path"], ext)
+            if text:
+                mark_files_fts_indexed([(rec["path"], text)], [], db_path=self.db_path)
+            else:
+                mark_files_fts_indexed([], [rec["path"]], db_path=self.db_path)
+        self.last_change = time.time()
+        clear_cache()
+        return True
 
     # -- status ----------------------------------------------------------------
 

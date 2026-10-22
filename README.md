@@ -113,7 +113,9 @@ viewer's own search (plain text).
 | `.docx` | Paragraph and table-cell text. Unchanged paragraphs stay exactly as they are. Paragraphs with pictures, links, fields, or tracked changes are locked. |
 | `.doc` `.xls` `.ppt` | Not editable (use Open). |
 
-Every save copies the old version to `data\backups` (last 200), refuses a file that changed on disk since you opened it, and fails safely when the file is open in another program. Ctrl+S saves, Esc leaves edit mode.
+A save refuses a file that changed on disk since you opened it, and fails safely when the file is open in another program. Ctrl+S saves, Esc leaves edit mode. The new text is in the index at once, so a search finds it right after the save, and the results refresh.
+
+**Backups.** Before a save, the old version is copied to `data\backups\<file name> (<code>)\` (the code tells apart files with the same name in different folders). There is one backup per editing session, not one per save: more saves of the same file within an hour make no new backup, so the backup keeps the version from before your edits. A file that another program changed in the meantime is always backed up first. The 3 newest backups of each file are kept (200 in all). Change this in **… > Settings > Backups when you save an edit**: off, a new backup at every save / 10 min / 1 hour / 1 day, how many to keep per file, and buttons to open the folder or delete all backups.
 
 ## Settings (`data\settings.json`)
 
@@ -126,9 +128,10 @@ Every save copies the old version to `data\backups` (last 200), refuses a file t
 | `start_with_windows` | `false` | Start when you sign in to Windows: one value for your user in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, kept up to date when the folder moves, removed when you turn it off |
 | `start_hidden` | `true` | When Windows starts the app: stay in the tray (`true`) or open the window |
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
+| `backups` | `{"enabled": true, "per_file": 3, "gap_minutes": 60}` | Backups when the editor saves: on/off, how many are kept per file (1–50), and the minutes in which more saves make no new backup (0 = a backup at every save) |
 | `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
 
-Change these in the app: **… > Settings** (start with Windows, the window), **Search settings**, and
+Change these in the app: **… > Settings** (start with Windows, the window, backups), **Search settings**, and
 **Keyboard shortcuts**. Start with Windows is also in the tray menu.
 
 Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of the app can be
@@ -159,7 +162,7 @@ Output in `release\`:
 - `PeekGrep.exe` is one self-extracting file (about 39 MB). On the first start it unpacks `PeekGrep\` next to itself. Later starts launch at once. A newer exe replaces `runtime\` and `app\` and keeps `data\`.
 - `PeekGrep\` is the unpacked portable folder (about 104 MB), with a plain launcher.
 
-Tests (115): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
+Tests (123): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 
 ## Motion references (from the motion reference matrix)
 

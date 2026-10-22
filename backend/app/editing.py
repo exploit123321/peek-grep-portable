@@ -3,7 +3,8 @@
 Safety rules for every save:
 - the file must be inside a working folder (checked by the router);
 - the file must not have changed on disk since it was loaded (mtime_ns check);
-- the old version is copied to data\\backups first;
+- the old version is copied to data\\backups first (see BackupPolicy: one backup per editing
+  session by default, a few kept per file);
 - the new content goes to a temporary file in the same folder, then replaces the original
   (a file that is open in Excel or Word cannot be replaced, so the save fails safely).
 
@@ -12,6 +13,7 @@ rebuilding their internal structure, with a high risk of damage.
 """
 
 import csv
+import hashlib
 import io
 import os
 import re
@@ -20,7 +22,9 @@ import tempfile
 import threading
 import time
 import zipfile
-from datetime import datetime
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
@@ -39,7 +43,7 @@ from app.indexer.parsers import DELIMITERS, TEXT_EXTENSIONS, delimiter_name, det
 MAX_EDIT_BYTES = 5 * 1024 * 1024
 MAX_CSV_ROWS = 50_000
 BACKUP_DIR = DATA_DIR / "backups"
-MAX_BACKUPS = 200
+MAX_BACKUPS = 200  # all files together
 
 CSV_EXTENSIONS = {".csv", ".tsv", ".tab"}
 XLSX_EXTENSIONS = {".xlsx", ".xlsm"}
@@ -85,22 +89,152 @@ def _check_unchanged(path: str, mtime_ns: int) -> None:
         raise EditError("The file changed on disk after you opened it. Close the editor and open it again.", 409)
 
 
-def _backup(path: str) -> str:
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    target = BACKUP_DIR / f"{stamp}_{os.path.basename(path)}"
-    n = 1
-    while target.exists():
-        target = BACKUP_DIR / f"{stamp}-{n}_{os.path.basename(path)}"
-        n += 1
-    shutil.copy2(path, target)
-    backups = sorted(BACKUP_DIR.iterdir(), key=lambda p: p.stat().st_mtime)
-    for old in backups[:-MAX_BACKUPS]:
+# -- backups -------------------------------------------------------------------------
+
+@dataclass
+class BackupPolicy:
+    """When a save copies the old version to data\\backups first.
+
+    gap_minutes: a file that already has a backup this recent, and was last written by this
+    app, gets no new one, so a backup holds the version from before an editing session, not
+    one per save (0 = a backup at every save). A version changed by another program is
+    always backed up. per_file: how many backups of one file are kept (the oldest go).
+    """
+
+    enabled: bool = True
+    per_file: int = 3
+    gap_minutes: int = 60
+
+    LIMITS = {"per_file": (1, 50), "gap_minutes": (0, 7 * 24 * 60)}
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "BackupPolicy":
+        policy = cls()
+        for k, v in (data or {}).items():
+            if k == "enabled":
+                policy.enabled = bool(v)
+            elif k in cls.LIMITS and isinstance(v, int) and not isinstance(v, bool):
+                low, high = cls.LIMITS[k]
+                setattr(policy, k, min(high, max(low, v)))
+        return policy
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+# The modification time each file had right after this app last saved it
+_last_saved: Dict[str, int] = {}
+_BACKUP_NAME = re.compile(r" (\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2})(-\d+)?(\.[^.]*)?$")
+_OLD_BACKUP_NAME = re.compile(r"^(\d{8}-\d{6})(-\d+)?_")
+
+
+def _file_key(path: str) -> str:
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+def backup_folder(path: str) -> Path:
+    """Backups of one file: data\\backups\\<name> (<6 hex digits of its full path>)."""
+    name = os.path.basename(path)
+    tag = hashlib.sha1(_file_key(path).encode("utf-8")).hexdigest()[:6]
+    stem, ext = os.path.splitext(name)
+    return BACKUP_DIR / f"{stem[:80]}{ext} ({tag})"
+
+
+def _backup_time(p: Path) -> float:
+    """When a backup was made: from its name (a copy keeps the original's modification time)."""
+    for pattern, fmt in ((_BACKUP_NAME, "%Y-%m-%d %H-%M-%S"), (_OLD_BACKUP_NAME, "%Y%m%d-%H%M%S")):
+        m = pattern.search(p.name)
+        if m:
+            try:
+                return datetime.strptime(m.group(1), fmt).timestamp()
+            except ValueError:
+                pass
+    try:
+        return p.stat().st_ctime
+    except OSError:
+        return 0.0
+
+
+def _same_second_number(p: Path) -> int:
+    """Backups made in the same second are numbered: name, name-2, name-3..."""
+    m = _BACKUP_NAME.search(p.name) or _OLD_BACKUP_NAME.search(p.name)
+    return int(m.group(2)[1:]) if m and m.group(2) else 1
+
+
+def _newest_first(files: List[Path]) -> List[Path]:
+    return sorted(files, key=lambda p: (_backup_time(p), _same_second_number(p)), reverse=True)
+
+
+def _all_backups() -> List[Path]:
+    if not BACKUP_DIR.is_dir():
+        return []
+    return [p for p in BACKUP_DIR.rglob("*") if p.is_file()]
+
+
+def _remove(p: Path) -> None:
+    try:
+        p.unlink()
+    except OSError:
+        return
+    folder = p.parent
+    if folder != BACKUP_DIR:
         try:
-            old.unlink()
+            folder.rmdir()  # only when empty
         except OSError:
             pass
-    return str(target)
+
+
+def _backup(path: str, policy: BackupPolicy) -> Tuple[Optional[str], Optional[str]]:
+    """Copy the file to data\\backups first. Returns (new backup, recent backup kept instead)."""
+    if not policy.enabled:
+        return None, None
+    folder = backup_folder(path)
+    existing = _newest_first([p for p in folder.iterdir() if p.is_file()]) if folder.is_dir() else []
+    if existing and policy.gap_minutes:
+        recent = datetime.now() - datetime.fromtimestamp(_backup_time(existing[0])) < timedelta(minutes=policy.gap_minutes)
+        if recent and _last_saved.get(_file_key(path)) == _stat(path):
+            return None, str(existing[0])
+
+    folder.mkdir(parents=True, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(path))
+    stamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+    n = 1 + max((_same_second_number(p) for p in existing if f" {stamp}" in p.name), default=0)
+    target = folder / (f"{stem[:80]} {stamp}{ext}" if n == 1 else f"{stem[:80]} {stamp}-{n}{ext}")
+    while target.exists():
+        n += 1
+        target = folder / f"{stem[:80]} {stamp}-{n}{ext}"
+    shutil.copy2(path, target)
+
+    for old in existing[max(0, policy.per_file - 1):]:
+        _remove(old)
+    everything = _newest_first(_all_backups())
+    for old in everything[MAX_BACKUPS:]:
+        _remove(old)
+    return str(target), None
+
+
+def backups_info() -> Dict[str, Any]:
+    files = _all_backups()
+    size = 0
+    for p in files:
+        try:
+            size += p.stat().st_size
+        except OSError:
+            pass
+    return {"count": len(files), "bytes": size, "folder": str(BACKUP_DIR)}
+
+
+def delete_backups() -> Dict[str, Any]:
+    """Delete every backup (the folder itself stays)."""
+    for p in _all_backups():
+        _remove(p)
+    if BACKUP_DIR.is_dir():
+        for folder in sorted((d for d in BACKUP_DIR.rglob("*") if d.is_dir()), key=lambda d: len(d.parts), reverse=True):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+    return backups_info()
 
 
 def _replace(path: str, write: Callable[[str], None]) -> None:
@@ -219,17 +353,19 @@ def load(path: str, ext: str) -> Dict[str, Any]:
 
 # -- save --------------------------------------------------------------------------
 
-def save(path: str, ext: str, mtime_ns: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+def save(path: str, ext: str, mtime_ns: int, payload: Dict[str, Any],
+         backups: Optional[BackupPolicy] = None) -> Dict[str, Any]:
     kind = edit_kind(ext)
     if kind is None:
         raise EditError("This file type cannot be edited here.", 415)
     _check_unchanged(path, mtime_ns)
+    policy = backups or BackupPolicy()
 
     if kind == "text" or (kind == "csv" and payload.get("text") is not None):
         raw = _read_limited(path)
         _, enc, newline = decode_text(raw)
         data = _encode_text(str(payload.get("text", "")), enc, newline)
-        backup = _backup(path)
+        backup, kept = _backup(path, policy)
         _replace(path, lambda tmp: _write_bytes(tmp, data))
 
     elif kind == "csv":
@@ -247,23 +383,25 @@ def save(path: str, ext: str, mtime_ns: int, payload: Dict[str, Any]) -> Dict[st
         if not text.endswith("\n") and out.endswith("\n"):
             out = out[:-1]
         data = _encode_text(out, enc, newline)
-        backup = _backup(path)
+        backup, kept = _backup(path, policy)
         _replace(path, lambda tmp: _write_bytes(tmp, data))
 
     elif kind == "workbook":
         changes = payload.get("changes") or {}
-        backup = _backup(path)
+        backup, kept = _backup(path, policy)
         _replace(path, lambda tmp: _xlsx_save(path, tmp, changes))
 
     elif kind == "document":
         changes = payload.get("changes") or {}
-        backup = _backup(path)
+        backup, kept = _backup(path, policy)
         _replace(path, lambda tmp: _docx_save(path, tmp, changes))
 
     else:
         raise EditError("This file type cannot be edited here.", 415)
 
-    return {"success": True, "mtime_ns": str(_stat(path)), "backup": backup}
+    new_mtime = _stat(path)
+    _last_saved[_file_key(path)] = new_mtime
+    return {"success": True, "mtime_ns": str(new_mtime), "backup": backup, "backup_kept": kept}
 
 
 # -- XML that keeps Office happy ----------------------------------------------------

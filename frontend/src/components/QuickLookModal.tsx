@@ -34,6 +34,19 @@ interface QuickLookModalProps {
   terms: HighlightTerm[];
   keymap: Keymap;
   searchOptions?: SearchOptions;
+  /** After a save: the file is indexed again, so the results can be refreshed */
+  onSaved?: (item: SearchItem) => void;
+}
+
+/** "14:05" for a backup made today, else "21 Oct 14:05" (from its name: "plan 2026-10-21 14-05-09.txt") */
+function backupTime(path: string): string {
+  const m = / (\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})-\d{2}(-\d+)?(\.[^.\\/]*)?$/.exec(path);
+  if (!m) return '';
+  const day = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const time = `${m[4]}:${m[5]}`;
+  return day.toDateString() === new Date().toDateString()
+    ? time
+    : `${day.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${time}`;
 }
 
 export const QuickLookModal: React.FC<QuickLookModalProps> = ({
@@ -48,6 +61,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   terms,
   keymap,
   searchOptions = DEFAULT_SEARCH_OPTIONS,
+  onSaved,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<PreviewPayload | null>(null);
@@ -96,11 +110,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     if (!item || !editModel || !dirty || saving) return;
     setSaving(true);
     try {
-      await api.editSave(item.path, editModel.mtime_ns, payloadRef.current);
-      toast('Saved. The old version is in data\\backups.');
+      const res = await api.editSave(item.path, editModel.mtime_ns, payloadRef.current);
+      const kept = res.backup_kept ? backupTime(res.backup_kept) : '';
+      toast(res.backup ? 'Saved. The old version is in data\\backups.' : kept ? `Saved. Backup from ${kept} kept.` : 'Saved.');
       setEditModel(null);
       setDirty(false);
       setReload(r => r + 1);
+      onSaved?.(item);
     } catch (e) {
       toast((e as Error).message, 'error');
     } finally {

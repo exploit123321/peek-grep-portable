@@ -113,3 +113,61 @@ def test_api_edit_routes(tmp_path):
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("no", encoding="utf-8")
     assert client.get("/api/edit", params={"path": str(outside)}).status_code == 403
+
+
+def _backup_files(folder):
+    return sorted(p.name for p in folder.rglob("*") if p.is_file())
+
+
+def test_one_backup_per_editing_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(editing, "BACKUP_DIR", tmp_path / "backups")
+    f = tmp_path / "plan.txt"
+    f.write_text("first\n", encoding="utf-8")
+
+    def edit(text, policy=None):
+        m = editing.load(str(f), ".txt")
+        return editing.save(str(f), ".txt", int(m["mtime_ns"]), {"text": text}, policy)
+
+    first = edit("second\n")
+    assert first["backup"] and Path(first["backup"]).read_text(encoding="utf-8") == "first\n"
+    assert Path(first["backup"]).parent == editing.backup_folder(str(f))
+    # More saves soon after: the backup from before the session is kept, no new ones
+    again = edit("third\n")
+    assert again["backup"] is None and again["backup_kept"] == first["backup"]
+    edit("fourth\n")
+    assert len(_backup_files(tmp_path / "backups")) == 1
+
+    # Changed by another program since this app saved it: that version is backed up
+    f.write_text("from another app\n", encoding="utf-8")
+    os.utime(f, ns=(os.stat(f).st_mtime_ns + 2_000_000_000,) * 2)
+    other = edit("fifth\n")
+    assert other["backup"] and Path(other["backup"]).read_text(encoding="utf-8") == "from another app\n"
+
+    # A backup at every save, with only the newest kept per file
+    every = editing.BackupPolicy(per_file=2, gap_minutes=0)
+    for text in ("6\n", "7\n", "8\n"):
+        edit(text, every)
+    kept = [p for p in editing.backup_folder(str(f)).iterdir()]
+    assert len(kept) == 2 and sorted(p.read_text(encoding="utf-8") for p in kept) == ["6\n", "7\n"]
+
+    # Backups off
+    off = edit("9\n", editing.BackupPolicy(enabled=False))
+    assert off["backup"] is None and len(_backup_files(tmp_path / "backups")) == 2
+
+
+def test_backup_policy_limits_and_delete_all(tmp_path, monkeypatch):
+    monkeypatch.setattr(editing, "BACKUP_DIR", tmp_path / "backups")
+    p = editing.BackupPolicy.from_dict({"per_file": 999, "gap_minutes": -5, "enabled": 0, "other": 1})
+    assert p.to_dict() == {"enabled": False, "per_file": 50, "gap_minutes": 0}
+    # Files with the same name in two folders keep separate backups
+    a, b = tmp_path / "x" / "same.txt", tmp_path / "y" / "same.txt"
+    for f in (a, b):
+        f.parent.mkdir()
+        f.write_text("old", encoding="utf-8")
+        m = editing.load(str(f), ".txt")
+        editing.save(str(f), ".txt", int(m["mtime_ns"]), {"text": "new"})
+    assert editing.backup_folder(str(a)) != editing.backup_folder(str(b))
+    (tmp_path / "backups" / "20240101-101010_older.txt").write_text("from an older version")
+    info = editing.backups_info()
+    assert info["count"] == 3 and info["bytes"] > 0
+    assert editing.delete_backups()["count"] == 0 and list((tmp_path / "backups").iterdir()) == []

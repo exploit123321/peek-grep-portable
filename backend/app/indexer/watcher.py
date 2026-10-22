@@ -149,7 +149,13 @@ class DebouncedChangeHandler(FileSystemEventHandler):
                         del self._pending_updates[path]
 
                 if self._pending_deletes:
-                    to_delete = list(self._pending_deletes)
+                    # Apps (and this one) save by writing a temporary file and renaming it over
+                    # the old one; Windows reports that as a delete, so a file that is there is updated
+                    for path in self._pending_deletes:
+                        if os.path.isfile(path):
+                            self._pending_updates.setdefault(path, now)
+                        else:
+                            to_delete.append(path)
                     self._pending_deletes.clear()
 
             for path in to_delete:
