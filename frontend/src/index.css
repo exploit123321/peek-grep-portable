@@ -115,6 +115,13 @@
     box-shadow: inset 0 0 0 1px var(--accent-line), 0 0 0 4px var(--accent-soft), 0 18px 40px -20px rgba(0, 0, 0, 0.9);
   }
 
+  /* Numbers: the UI font with even-width digits (the code font has a dotted zero) */
+  .num {
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
   .label-caps {
     @apply text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-3;
   }
@@ -187,17 +194,17 @@
 /* Rolling digits (R29 Countdown) */
 .roll-digit {
   display: inline-block;
-  height: 1em;
+  height: 1.2em;
   overflow: hidden;
   vertical-align: top;
-  line-height: 1em;
+  line-height: 1.2em;
 }
 .roll-strip {
   display: flex;
   flex-direction: column;
   transition: transform 560ms var(--ease-out);
 }
-.roll-strip > span { height: 1em; line-height: 1em; }
+.roll-strip > span { height: 1.2em; line-height: 1.2em; }
 
 /* Animated checkbox (R28) */
 .check-box {

@@ -10,7 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import APP_VERSION, DATA_DIR, DB_PATH, PROJECT_ROOT
 from app.indexer.db import count_files, count_fts_indexed
-from app.routers import actions, edit, folders, preview, search
+from app.routers import actions, edit, folders, preview, search, settings
 from app.schemas import ActionResponse, ResizeWindowRequest, StatusResponse, WindowSizeResponse
 from app.state import desktop_hooks, index_manager, settings_store
 
@@ -35,6 +35,7 @@ set_get_window_size_callback = _set_hook("window_size")
 set_pick_folders_callback = _set_hook("pick_folders")
 set_open_data_folder_callback = _set_hook("open_data_folder")
 set_quit_callback = _set_hook("quit")
+set_hotkey_callback = _set_hook("set_hotkey")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -71,6 +72,7 @@ app.include_router(preview.router)
 app.include_router(actions.router)
 app.include_router(folders.router)
 app.include_router(edit.router)
+app.include_router(settings.router)
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:

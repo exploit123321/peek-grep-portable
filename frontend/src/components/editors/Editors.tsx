@@ -47,7 +47,7 @@ export const TextEditor: React.FC<EditorProps & { initial?: string }> = ({ model
           style={{ tabSize: 4, minHeight: `${lines * 1.65 * 12 + 32}px` }}
         />
       </div>
-      <div className="flex items-center gap-3 h-8 px-4 shrink-0 text-[11px] text-fg-3 font-mono" style={{ borderTop: '1px solid var(--line)' }}>
+      <div className="flex items-center gap-3 h-8 px-4 shrink-0 text-[11.5px] text-fg-3 num" style={{ borderTop: '1px solid var(--line)' }}>
         <span>{model.encoding}</span>
         <span>{model.newline === '\r\n' ? 'CRLF' : model.newline === '\r' ? 'CR' : 'LF'}</span>
         <span>{lines.toLocaleString()} lines</span>

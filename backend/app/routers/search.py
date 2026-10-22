@@ -1,10 +1,10 @@
-﻿"""Fast search endpoints with high-speed query dispatch and snippet extraction."""
+"""Search endpoint: smart search syntax, groups for [a, b], and paging for endless scrolling."""
 
 import time
 from typing import Optional
 from fastapi import APIRouter, Query
 from fastapi.concurrency import run_in_threadpool
-from app.indexer.db import search_files
+from app.indexer.smart_search import run_search
 from app.schemas import SearchResponse
 from app.state import require_allowed, settings_store
 
@@ -12,36 +12,35 @@ router = APIRouter(prefix="/api", tags=["search"])
 
 @router.get("/search", response_model=SearchResponse)
 async def search(
-    q: str = Query(default="", description="Search query string"),
-    mode: str = Query(default="all", description="Search mode: all, filename, or content"),
+    q: str = Query(default="", description="Search text: file names, and text after \":\" (smart search syntax)"),
     type_filter: str = Query(default="all", description="Category filter: all, code, docs, markdown, data, media, plain"),
-    limit: int = Query(default=50, ge=1, le=200, description="Max results limit"),
+    limit: int = Query(default=60, ge=1, le=500, description="Results per page"),
+    offset: int = Query(default=0, ge=0, description="First result of the page"),
+    group: Optional[int] = Query(default=None, ge=0, description="Grouped search: page of this group only"),
     folder: Optional[str] = Query(default=None, description="Limit results to one working folder"),
 ) -> SearchResponse:
-    """Execute debounced query against SQLite metadata and FTS5 inverted index."""
+    """One page of results. Grouped searches return the first page of every group."""
     start = time.perf_counter()
 
     if folder:
         require_allowed(folder)
 
-    results = []
+    body = {"results": [], "total": 0, "groups": [], "grouped": False, "highlight": [], "explain": []}
     if settings_store.folders():
-        results = await run_in_threadpool(
-            search_files,
+        body = await run_in_threadpool(
+            run_search,
             query=q,
-            mode=mode,
             type_filter=type_filter,
-            limit=limit,
             folder=folder,
+            offset=offset,
+            limit=limit,
+            group=group,
+            group_limit=min(limit, 25),
         )
-
-    duration_ms = (time.perf_counter() - start) * 1000.0
 
     return SearchResponse(
         query=q,
-        mode=mode,
         type_filter=type_filter,
-        total=len(results),
-        took_ms=round(duration_ms, 2),
-        results=results,
+        took_ms=round((time.perf_counter() - start) * 1000.0, 2),
+        **body,
     )

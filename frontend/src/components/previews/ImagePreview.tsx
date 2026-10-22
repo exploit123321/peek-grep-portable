@@ -43,7 +43,7 @@ export const ImagePreview: React.FC<{ rawUrl: string; filename: string; imageMet
         <button type="button" className="icon-btn" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} title="Zoom out">
           <Minus className="w-3.5 h-3.5" />
         </button>
-        <span className="w-12 text-center font-mono text-[11.5px] text-fg-2">{Math.round(zoom * 100)}%</span>
+        <span className="w-12 text-center num text-[11.5px] text-fg-2">{Math.round(zoom * 100)}%</span>
         <button type="button" className="icon-btn" onClick={() => setZoom(z => Math.min(4, z + 0.25))} title="Zoom in">
           <Plus className="w-3.5 h-3.5" />
         </button>
@@ -51,7 +51,7 @@ export const ImagePreview: React.FC<{ rawUrl: string; filename: string; imageMet
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
         {imageMeta && (
-          <span className="pl-2 pr-2.5 text-[11.5px] text-fg-3 font-mono" style={{ borderLeft: '1px solid var(--line)' }}>
+          <span className="pl-2 pr-2.5 text-[11.5px] text-fg-3 num" style={{ borderLeft: '1px solid var(--line)' }}>
             {imageMeta.width}×{imageMeta.height} · {imageMeta.format}
           </span>
         )}

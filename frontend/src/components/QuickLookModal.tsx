@@ -1,5 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, X } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, Search, X } from 'lucide-react';
 import { api, Delimiter, EditModel, PreviewPayload, SearchItem } from '../api';
 import { CsvEditor, DocumentEditor, TextEditor, WorkbookEditor } from './editors/Editors';
 import { useToast } from './Toasts';
@@ -14,6 +14,8 @@ import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/Offi
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
+import { HighlightTerm, parseFindText, plainSearchText } from '../utils/query';
+import { ACTIONS, bindingParts, eventToBinding, Keymap, matches } from '../utils/keymap';
 import { HitReport, HitsContext } from './VirtualGrid';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
@@ -23,12 +25,13 @@ interface QuickLookModalProps {
   item: SearchItem | null;
   originRect: DOMRect | null;
   folders: string[];
-  position: { index: number; total: number };
+  position: { index: number; total: number; label?: string };
   onClose: () => void;
   onOpen: (item: SearchItem) => void;
   onReveal: (item: SearchItem) => void;
   onCopyPath: (item: SearchItem) => void;
-  query: string;
+  terms: HighlightTerm[];
+  keymap: Keymap;
 }
 
 export const QuickLookModal: React.FC<QuickLookModalProps> = ({
@@ -40,7 +43,8 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onOpen,
   onReveal,
   onCopyPath,
-  query,
+  terms,
+  keymap,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<PreviewPayload | null>(null);
@@ -55,6 +59,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const payloadRef = useRef<Record<string, unknown>>({});
   const toast = useToast();
   const editing = editModel !== null;
+  const current = data && item && data.path.toLowerCase() === item.path.toLowerCase() ? data : null;
 
   // While editing, the window's search keys (Space, arrows, Enter, Esc) stay off
   useEffect(() => {
@@ -108,10 +113,10 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   useEffect(() => {
     if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if (matches(e, keymap.save_edit)) {
         e.preventDefault();
         saveEdit();
-      } else if (e.key === 'Escape' && !(e.target as HTMLElement).closest('td')) {
+      } else if ((e.key === 'Escape' || matches(e, keymap.close_preview)) && !(e.target as HTMLElement).closest('td')) {
         e.preventDefault();
         leaveEdit();
       }
@@ -173,17 +178,58 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     return () => ctrl.abort();
   }, [item?.path, delimiter, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Find in the preview: its own text, or (closed / empty) the terms of the search
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState('');
+  const findRef = useRef<HTMLInputElement>(null);
+  const findOpenRef = useRef(false);
+  findOpenRef.current = findOpen;
+  const findTerms = useMemo(() => parseFindText(findText), [findText]);
+  const searchTermsKey = JSON.stringify(terms);
+  const activeTerms = useMemo(
+    () => (findOpen && findTerms.length ? findTerms : terms),
+    [findOpen, findTerms, searchTermsKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const termsKey = JSON.stringify(activeTerms);
+
+  const typesIntoFind = (e: KeyboardEvent) => {
+    if (e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.altKey || e.metaKey) return false;
+    const active = document.activeElement as HTMLElement | null;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return false;
+    const binding = eventToBinding(e);
+    return !ACTIONS.some(a => a.context !== 'results' && binding !== null && keymap[a.id].includes(binding));
+  };
+
+  const openFind = () => {
+    if (findOpenRef.current && findRef.current) {
+      // Already open: select the text, so typing replaces it
+      findRef.current.focus();
+      findRef.current.select();
+      return;
+    }
+    // New box: autoFocus gives it the focus when it mounts (no select: letters typed meanwhile stay)
+    findOpenRef.current = true;
+    setFindOpen(true);
+  };
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindText('');
+    panelRef.current?.focus();
+  };
+
   // Search hits: highlight every match and scroll to the first one
   const bodyRef = useRef<HTMLDivElement>(null);
   const [hits, setHits] = useState<Range[]>([]);
   const [hitIndex, setHitIndex] = useState(0);
+  const hitIndexRef = useRef(0);
+  hitIndexRef.current = hitIndex;
   // Table views report their hits from the data (they draw only the visible rows)
   const [tableHits, setTableHits] = useState<HitReport | null>(null);
   const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook';
 
   useEffect(() => {
     const root = bodyRef.current;
-    if (!root || editing || !data || !query.trim() || isTableView) {
+    if (!root || editing || !data || !activeTerms.length || isTableView) {
       clearHits();
       setHits([]);
       return;
@@ -191,7 +237,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     let timer = 0;
     let firstRun = true;
     const scan = () => {
-      const found = findHits(root, query);
+      const found = findHits(root, activeTerms);
       setHits(found);
       setHitIndex(0);
       paintHits(found, 0);
@@ -210,7 +256,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       cancelAnimationFrame(raf);
       window.clearTimeout(timer);
     };
-  }, [data, raw, editing, query, isTableView]);
+  }, [data, raw, editing, termsKey, isTableView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => clearHits(), []);
 
@@ -220,7 +266,8 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       return;
     }
     if (!hits.length) return;
-    const next = (hitIndex + step + hits.length) % hits.length;
+    const next = (hitIndexRef.current + step + hits.length) % hits.length;
+    hitIndexRef.current = next;
     setHitIndex(next);
     paintHits(hits, next);
     revealRange(hits[next]);
@@ -229,9 +276,28 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   useEffect(() => {
     if (editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F3') {
+      if (matches(e, keymap.find_in_preview)) {
         e.preventDefault();
-        goHit(e.shiftKey ? -1 : 1);
+        e.stopPropagation();
+        openFind();
+      } else if (matches(e, keymap.next_hit) || matches(e, keymap.prev_hit)) {
+        e.preventDefault();
+        e.stopPropagation();
+        goHit(matches(e, keymap.prev_hit) ? -1 : 1);
+      } else if (matches(e, keymap.edit_file) && current?.editable && document.activeElement !== findRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        startEdit();
+      } else if (typesIntoFind(e)) {
+        // Type to find: letters go to the find box (also the ones typed before it has the focus)
+        e.preventDefault();
+        e.stopPropagation();
+        const open = findOpenRef.current;
+        findOpenRef.current = true; // the next key (before the next render) appends
+        setFindText(t => (open ? t : '') + e.key);
+        setFindOpen(true);
+        findRef.current?.focus();
+        requestAnimationFrame(() => findRef.current?.focus());
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -242,7 +308,6 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   const kind = fileKind(item.category, item.extension);
   const crumbs = compactCrumbs(folderCrumbs(item.path, folders), 5);
-  const current = data && data.path.toLowerCase() === item.path.toLowerCase() ? data : null;
 
   const editorProps = {
     onChange: (payload: Record<string, unknown>, isDirty: boolean) => {
@@ -285,17 +350,17 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'markdown':
         return <MarkdownPreview content={current.content || ''} raw={raw} />;
       case 'table':
-        return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} query={query} /> : null;
+        return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} terms={activeTerms} /> : null;
       case 'image':
         return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
       case 'pdf':
-        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} query={query} /> : null;
+        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} search={plainSearchText(activeTerms)} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
       case 'document':
         return <DocumentPreview html={current.document_html || ''} />;
       case 'workbook':
-        return <WorkbookPreview sheets={current.sheets || []} query={query} />;
+        return <WorkbookPreview sheets={current.sheets || []} terms={activeTerms} />;
       case 'slides':
         return <SlidesPreview slides={current.slides || []} />;
       case 'plain':
@@ -327,6 +392,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           boxShadow: 'inset 0 0 0 1px var(--line-strong), 0 40px 100px -30px rgba(0,0,0,0.9)',
         }}
         role="dialog"
+        tabIndex={-1}
         aria-label={`Quick Look: ${item.filename}`}
       >
         <div className="flex items-center gap-3 h-[58px] pl-4 pr-3 shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
@@ -342,12 +408,17 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
               ))}
             </span>
           </div>
-          {(tableHits ? tableHits.count : hits.length) > 0 && !editing && (
+          {!editing && !findOpen && (
+            <button type="button" className="icon-btn" onClick={openFind} title={`Find in the preview (${keymap.find_in_preview.join(', ') || 'no key'})`}>
+              <Search className="w-4 h-4" />
+            </button>
+          )}
+          {(tableHits ? tableHits.count : hits.length) > 0 && !editing && !findOpen && (
             <span className="flex items-center h-7 rounded-lg text-[11.5px] text-fg-2" style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }} title="Search hits in this file (F3, Shift+F3)">
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title="Previous hit (Shift+F3)">
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
-              <span className="font-mono px-1 tabular-nums" style={{ color: '#facc15' }}>
+              <span className="num px-1" style={{ color: '#facc15' }}>
                 {tableHits ? `${tableHits.index + 1}/${tableHits.count.toLocaleString()}` : `${hitIndex + 1}/${hits.length}`}
               </span>
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(1)} title="Next hit (F3)">
@@ -355,8 +426,8 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
               </button>
             </span>
           )}
-          <span className="hidden sm:inline font-mono text-[11px] text-fg-3 mr-1" title="File position in the results">
-            {position.index + 1} / {position.total}
+          <span className="hidden sm:inline num text-[11.5px] text-fg-3 mr-1 max-w-[180px] truncate" title="File position in the results">
+            {position.label ? `${position.label} · ` : ''}{position.index + 1} / {position.total.toLocaleString()}
           </span>
           {!editing && current?.preview_type === 'markdown' && (
             <button type="button" className="btn !h-7" onClick={() => setRaw(r => !r)} title="Rendered or source">
@@ -396,26 +467,101 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         </div>
 
         <HitsContext.Provider value={setTableHits}>
-        <div ref={bodyRef} className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
+        <div className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
           {loading && current && <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden loading-line z-10" />}
-          {body()}
+          {findOpen && !editing && (
+            <div
+              className="absolute top-2 right-4 z-20 flex items-center gap-1 h-9 pl-2.5 pr-1 rounded-xl fade-up"
+              style={{
+                background: 'rgba(24,24,31,0.97)',
+                boxShadow: 'inset 0 0 0 1px var(--accent-line), 0 14px 34px -14px rgba(0,0,0,0.85)',
+                animationDuration: '220ms',
+              }}
+            >
+              <Search className="w-3.5 h-3.5 text-fg-3 shrink-0" />
+              <input
+                ref={findRef}
+                autoFocus
+                value={findText}
+                onChange={e => setFindText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeFind();
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    goHit(e.shiftKey ? -1 : 1);
+                  } else if (matches(e, keymap.next_hit) || matches(e, keymap.prev_hit)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    goHit(matches(e, keymap.prev_hit) ? -1 : 1);
+                  } else {
+                    e.stopPropagation();
+                  }
+                }}
+                placeholder="Find in this file"
+                title="Wildcards: * and ?. Several terms: a+b. Literal text: /text"
+                className="w-52 h-full bg-transparent text-[13px] text-fg placeholder:text-fg-3 outline-none select-text"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <span className="num text-[11.5px] min-w-[52px] text-right px-1" style={{ color: findText.trim() ? '#facc15' : 'var(--text-3)' }}>
+                {findText.trim()
+                  ? (tableHits ? tableHits.count : hits.length) > 0
+                    ? tableHits ? `${tableHits.index + 1}/${tableHits.count.toLocaleString()}` : `${hitIndex + 1}/${hits.length.toLocaleString()}`
+                    : current?.preview_type === 'pdf' ? 'in PDF' : 'no hits'
+                  : ''}
+              </span>
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title={`Previous hit (Shift+Enter, ${keymap.prev_hit.join(', ')})`}>
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(1)} title={`Next hit (Enter, ${keymap.next_hit.join(', ')})`}>
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={closeFind} title="Close (Esc)">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+          <div ref={bodyRef} className="absolute inset-0">
+            {body()}
+          </div>
         </div>
         </HitsContext.Provider>
 
         <div className="flex items-center justify-between gap-3 h-9 px-4 shrink-0 text-[11.5px] text-fg-3" style={{ borderTop: '1px solid var(--line)' }}>
-          <div className="flex items-center gap-3 font-mono">
+          <div className="flex items-center gap-3 num">
             <span>{formatBytes(item.size_bytes)}</span>
             <span>{item.extension || 'file'}</span>
             <span>{formatDate(item.mtime)}</span>
             {current?.truncated && <span className="text-warn">First 2 MB shown</span>}
           </div>
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5"><span className="kbd">↑</span><span className="kbd">↓</span> Next file</span>
-            <span className="flex items-center gap-1.5"><span className="kbd">↵</span> Open</span>
-            <span className="flex items-center gap-1.5"><span className="kbd">Esc</span> Close</span>
+          <div className="flex items-center gap-3 whitespace-nowrap overflow-hidden">
+            <KeyHint keys={[keymap.move_up[0], keymap.move_down[0]]} label="Next file" />
+            <KeyHint keys={[keymap.find_in_preview[0]]} label="Find" />
+            <KeyHint keys={[keymap.open[0]]} label="Open" />
+            <KeyHint keys={[keymap.close_preview[0]]} label="Close" />
           </div>
         </div>
       </div>
     </div>
+  );
+};
+
+/** Footer hint: the current keys of an action as <kbd> chips (nothing when the action has no key). */
+export const KeyHint: React.FC<{ keys: (string | undefined)[]; label: string; className?: string }> = ({ keys, label, className }) => {
+  const list = keys.filter((k): k is string => !!k);
+  if (!list.length) return null;
+  return (
+    <span className={`flex items-center gap-1.5 ${className ?? ''}`}>
+      {list.map((k, i) => (
+        <React.Fragment key={i}>
+          {bindingParts(k).map((part, j) => <span key={j} className="kbd">{part}</span>)}
+        </React.Fragment>
+      ))}
+      {label}
+    </span>
   );
 };

@@ -1,26 +1,59 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileCode2, FileText, Image as ImageIcon, Layers, SearchX, Sheet, Sparkles } from 'lucide-react';
-import { api, Category, FolderDetails, IndexerStatus, SearchItem, SearchMode } from './api';
+import { ChevronsDownUp, ChevronsUpDown, ClipboardList, FileCode2, FileText, Image as ImageIcon, Layers, Pencil, SearchX, Sheet, Sparkles, X } from 'lucide-react';
+import { api, AppSettings, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
 import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
-import { ResultsList } from './components/ResultsList';
-import { QuickLookModal } from './components/QuickLookModal';
+import { ResultsList, Row } from './components/ResultsList';
+import { KeyHint, QuickLookModal } from './components/QuickLookModal';
 import { Onboarding } from './components/Onboarding';
 import { FoldersPanel } from './components/FoldersPanel';
+import { ListEditor } from './components/ListEditor';
+import { ShortcutsPanel } from './components/ShortcutsPanel';
+import { chipsWorthShowing, QueryChips } from './components/QueryHints';
 import { ToastProvider, useToast } from './components/Toasts';
 import { SegmentedControl } from './components/motion/SegmentedControl';
 import { RollingNumber } from './components/motion/RollingNumber';
 import { folderLabel } from './utils/paths';
+import { HighlightTerm, ListMode, listToQuery, ListWhere, parseClipboardGrid, isListPaste } from './utils/query';
+import { ActionId, bindingParts, buildKeymap, DEFAULT_KEYMAP, eventToBinding, isTypingKey, Keymap, keymapOverrides } from './utils/keymap';
 
 type View = 'loading' | 'onboarding' | 'search';
 
+const PAGE = 60;
+
 const CATEGORIES = [
-  { id: 'all' as const, label: 'All', icon: Layers, hint: 'Ctrl+1' },
-  { id: 'code' as const, label: 'Code', icon: FileCode2, hint: 'Ctrl+2' },
-  { id: 'docs' as const, label: 'Docs', icon: FileText, hint: 'Ctrl+3: Word, PowerPoint, PDF, Markdown, EPUB, text' },
-  { id: 'data' as const, label: 'Data', icon: Sheet, hint: 'Ctrl+4: Excel, CSV, TSV' },
-  { id: 'media' as const, label: 'Images', icon: ImageIcon, hint: 'Ctrl+5' },
+  { id: 'all' as const, label: 'All', icon: Layers, hint: 'All file types' },
+  { id: 'code' as const, label: 'Code', icon: FileCode2, hint: 'Code' },
+  { id: 'docs' as const, label: 'Docs', icon: FileText, hint: 'Word, PowerPoint, PDF, Markdown, EPUB, text' },
+  { id: 'data' as const, label: 'Data', icon: Sheet, hint: 'Excel, CSV, TSV' },
+  { id: 'media' as const, label: 'Images', icon: ImageIcon, hint: 'Images' },
 ];
+
+/** One list of results: the whole search, or one group of [a, b]. */
+interface ListState {
+  label: string;
+  items: SearchItem[];
+  total: number;
+  hasMore: boolean;
+  loading: boolean;
+  highlight: HighlightTerm[];
+}
+
+const EMPTY_LIST: ListState = { label: '', items: [], total: 0, hasMore: false, loading: false, highlight: [] };
+
+/** A list searched from the list table: its values stay visible under the search field. */
+interface PastedList {
+  values: string[];
+  mode: ListMode;
+  where: ListWhere;
+  filter: string;
+  query: string;
+}
+
+function appendUnique(items: SearchItem[], more: SearchItem[]): SearchItem[] {
+  const seen = new Set(items.map(i => i.path));
+  return [...items, ...more.filter(i => !seen.has(i.path))];
+}
 
 function Workspace() {
   const toast = useToast();
@@ -31,21 +64,35 @@ function Workspace() {
   const [foldersOpen, setFoldersOpen] = useState(false);
 
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<SearchMode>('all');
   const [category, setCategory] = useState<Category>('all');
   const [scope, setScope] = useState<string | null>(null);
-  const [items, setItems] = useState<SearchItem[]>([]);
+  const [flat, setFlat] = useState<ListState>(EMPTY_LIST);
+  const [groups, setGroups] = useState<ListState[] | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [chips, setChips] = useState<ExplainChip[]>([]);
   const [tookMs, setTookMs] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState(0);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [keyboardFocus, setKeyboardFocus] = useState(false);
   const [quickLook, setQuickLook] = useState<{ open: boolean; origin: DOMRect | null }>({ open: false, origin: null });
   const [refreshTick, setRefreshTick] = useState(0);
+
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYMAP);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [listEditor, setListEditor] = useState<{ grid: string[][]; mode: ListMode; where: ListWhere; filter: string; source: 'paste' | 'edit' | 'new' } | null>(null);
+  const [pasted, setPasted] = useState<PastedList | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lastRefresh = useRef(0);
   const lastTotal = useRef(0);
+  const searchGen = useRef(0);
+  const lastSearchKey = useRef('');
+  const flatRef = useRef(flat);
+  const groupsRef = useRef(groups);
+  flatRef.current = flat;
+  groupsRef.current = groups;
 
   const folders = useMemo(() => details?.folders.map(f => f.path) ?? [], [details]);
 
@@ -66,6 +113,16 @@ function Workspace() {
       setView(d.setup_done && d.folders.length ? 'search' : 'onboarding');
     });
   }, [loadDetails]);
+
+  // Keyboard shortcuts from data\settings.json
+  useEffect(() => {
+    api.settings()
+      .then(s => {
+        setSettings(s);
+        setKeymap(buildKeymap(s.shortcuts));
+      })
+      .catch(() => {});
+  }, []);
 
   // Poll indexer status: fast while work runs, slow when idle, very slow while hidden in the tray
   const hiddenRef = useRef(false);
@@ -106,17 +163,37 @@ function Workspace() {
     };
   }, []);
 
-  // Search with a short debounce; stale requests are cancelled
+  // Search with a short debounce; stale requests are cancelled. A refresh (the index changed)
+  // keeps the rows that are already loaded.
   useEffect(() => {
     if (view !== 'search') return;
     const ctrl = new AbortController();
+    const key = JSON.stringify([query, category, scope]);
+    const refresh = key === lastSearchKey.current;
+    lastSearchKey.current = key;
     const timer = window.setTimeout(async () => {
+      const gen = ++searchGen.current;
       setBusy(true);
       try {
-        const res = await api.search({ q: query, mode, type: category, folder: scope }, ctrl.signal);
-        setItems(res.results);
+        const keep = refresh ? Math.min(500, Math.max(PAGE, flatRef.current.items.length)) : PAGE;
+        const res = await api.search({ q: query, type: category, folder: scope, limit: keep }, ctrl.signal);
+        if (gen !== searchGen.current) return;
+        if (res.grouped) {
+          setGroups(res.groups.map(g => ({
+            label: g.label, items: g.results, total: g.total, hasMore: g.has_more, loading: false, highlight: g.highlight,
+          })));
+          setFlat(EMPTY_LIST);
+          if (!refresh) {
+            // One group opens by itself; several start closed, like drop-downs
+            setExpanded(prev => (res.groups.length === 1 ? new Set([res.groups[0].label]) : new Set([...prev].filter(l => res.groups.some(g => g.label === l)))));
+          }
+        } else {
+          setGroups(null);
+          setFlat({ label: '', items: res.results, total: res.total, hasMore: res.has_more, loading: false, highlight: res.highlight });
+        }
+        setChips(res.explain);
         setTookMs(res.took_ms);
-        setSelected(prev => (prev < res.results.length ? prev : 0));
+        if (!refresh) setSelectedKey(null);
       } catch (e) {
         if (!ctrl.signal.aborted) console.error(e);
       } finally {
@@ -127,12 +204,55 @@ function Workspace() {
       ctrl.abort();
       window.clearTimeout(timer);
     };
-  }, [query, mode, category, scope, view, refreshTick]);
+  }, [query, category, scope, view, refreshTick]);
 
-  // New query: start at the top
-  useEffect(() => setSelected(0), [query, mode, category, scope]);
+  // Next page of the whole list (group null) or of one group
+  const loadMore = useCallback(async (group: number | null) => {
+    const list = group === null ? flatRef.current : groupsRef.current?.[group];
+    if (!list || list.loading || !list.hasMore) return;
+    const gen = searchGen.current;
+    const update = (fn: (l: ListState) => ListState) => {
+      if (group === null) setFlat(l => fn(l));
+      else setGroups(gs => gs && gs.map((g, i) => (i === group ? fn(g) : g)));
+    };
+    update(l => ({ ...l, loading: true }));
+    try {
+      const res = await api.search({ q: query, type: category, folder: scope, offset: list.items.length, limit: PAGE, group });
+      if (gen !== searchGen.current) return;
+      update(l => ({ ...l, items: appendUnique(l.items, res.results), total: res.total, hasMore: res.has_more, loading: false }));
+    } catch {
+      if (gen === searchGen.current) update(l => ({ ...l, loading: false, hasMore: false }));
+    }
+  }, [query, category, scope]);
 
-  const selectedItem = items[selected] ?? null;
+  // Rows on screen: files, or group rows with their files when open
+  const rows = useMemo<Row[]>(() => {
+    if (!groups) {
+      const out: Row[] = flat.items.map((item, index) => ({ kind: 'item', key: `i::${item.path}`, item, group: null, index }));
+      if (flat.hasMore) out.push({ kind: 'more', key: 'm:', group: null, loading: flat.loading });
+      return out;
+    }
+    const out: Row[] = [];
+    groups.forEach((g, gi) => {
+      const open = expanded.has(g.label);
+      out.push({ kind: 'header', key: `h:${gi}`, group: gi, label: g.label, total: g.total, expanded: open, loading: g.loading });
+      if (!open) return;
+      g.items.forEach((item, index) => out.push({ kind: 'item', key: `i:${gi}:${item.path}`, item, group: gi, index }));
+      if (g.hasMore) out.push({ kind: 'more', key: `m:${gi}`, group: gi, loading: g.loading });
+    });
+    return out;
+  }, [groups, flat, expanded]);
+
+  const found = rows.findIndex(r => r.key === selectedKey);
+  const selected = found >= 0 ? found : rows.findIndex(r => r.kind !== 'more');
+  const selectedRow = selected >= 0 ? rows[selected] : null;
+  const selectedItem = selectedRow?.kind === 'item' ? selectedRow.item : null;
+  const totalFiles = groups ? groups.reduce((n, g) => n + g.total, 0) : flat.total;
+
+  const termsFor = useCallback(
+    (group: number | null) => (group === null ? flat.highlight : groups?.[group]?.highlight ?? []),
+    [flat.highlight, groups],
+  );
 
   const openItem = useCallback(async (item: SearchItem) => {
     try {
@@ -161,23 +281,55 @@ function Workspace() {
     }
   }, [toast]);
 
+  const toggleGroup = useCallback((group: number, open?: boolean) => {
+    const label = groupsRef.current?.[group]?.label;
+    if (label === undefined) return;
+    setExpanded(prev => {
+      const next = new Set(prev);
+      const want = open ?? !next.has(label);
+      if (want) next.add(label);
+      else next.delete(label);
+      return next;
+    });
+  }, []);
+
+  const toggleAllGroups = useCallback(() => {
+    const gs = groupsRef.current;
+    if (!gs) return;
+    setExpanded(prev => (gs.every(g => prev.has(g.label)) ? new Set() : new Set(gs.map(g => g.label))));
+  }, []);
+
   const openQuickLook = useCallback((idx: number) => {
-    if (!items[idx]) return;
-    setSelected(idx);
-    const row = document.getElementById(`row-${idx}`);
-    setQuickLook({ open: true, origin: row ? row.getBoundingClientRect() : null });
-  }, [items]);
+    const row = rows[idx];
+    if (!row || row.kind !== 'item') return;
+    setSelectedKey(row.key);
+    const el = document.getElementById(`row-${idx}`);
+    setQuickLook({ open: true, origin: el ? el.getBoundingClientRect() : null });
+  }, [rows]);
 
   const closeQuickLook = useCallback(() => {
     setQuickLook({ open: false, origin: null });
     requestAnimationFrame(() => listRef.current?.focus());
   }, []);
 
-  const move = useCallback((dir: 1 | -1) => {
-    if (!items.length) return;
+  /** Move the selection. onlyFiles: skip group rows (Quick Look). Near the end the next page loads. */
+  const move = useCallback((dir: 1 | -1, onlyFiles = false) => {
+    if (!rows.length) return;
     setKeyboardFocus(true);
-    setSelected(i => Math.min(items.length - 1, Math.max(0, i + dir)));
-  }, [items.length]);
+    let j = selected;
+    for (let k = selected + dir; k >= 0 && k < rows.length; k += dir) {
+      const r = rows[k];
+      if (r.kind === 'more' || (onlyFiles && r.kind !== 'item')) continue;
+      j = k;
+      break;
+    }
+    if (rows[j]) setSelectedKey(rows[j].key);
+    // Prefetch: a "more" row a few rows ahead
+    for (let k = j; k < Math.min(rows.length, j + 6); k++) {
+      const r = rows[k];
+      if (r.kind === 'more') loadMore(r.group);
+    }
+  }, [rows, selected, loadMore]);
 
   // Desktop window events (tray menu, hotkey)
   useEffect(() => {
@@ -208,51 +360,81 @@ function Workspace() {
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  // Keyboard model: arrows move, Space previews, Enter opens, Esc steps back
+  const overlayOpen = foldersOpen || shortcutsOpen || listEditor !== null;
+
+  const openListEditor = useCallback((grid: string[][], source: 'paste' | 'edit' | 'new') => {
+    setListEditor({ grid, source, mode: pasted?.mode ?? 'groups', where: pasted?.where ?? 'names', filter: pasted?.filter ?? '' });
+  }, [pasted]);
+
+  const confirmList = (values: string[], listMode: ListMode, where: ListWhere, filter: string) => {
+    const q = listToQuery(values, listMode, where, filter);
+    setPasted({ values, mode: listMode, where, filter, query: q });
+    setQuery(q);
+    setListEditor(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  // Paste while the list (not a text field) has the focus: a list opens the table, text goes to the search
   useEffect(() => {
-    if (view !== 'search' || foldersOpen) return;
+    if (view !== 'search') return;
+    const onPaste = (e: ClipboardEvent) => {
+      if (overlayOpen || quickLook.open) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text) return;
+      e.preventDefault();
+      if (isListPaste(text)) openListEditor(parseClipboardGrid(text), 'paste');
+      else {
+        setQuery(q => q + text.replace(/[\r\n]+/g, ' ').trim());
+        inputRef.current?.focus();
+      }
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [view, overlayOpen, quickLook.open, openListEditor]);
+
+  // Keyboard model (keys from the keymap): arrows move, Space previews, Enter opens, Esc steps back
+  useEffect(() => {
+    if (view !== 'search' || overlayOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (document.body.dataset.editing === '1') return; // the Quick Look editor has the keyboard
+      if (document.body.dataset.editing === '1' || e.isComposing) return; // the Quick Look editor has the keyboard
       const active = document.activeElement as HTMLElement | null;
       const inSearch = active === inputRef.current;
-      const inOtherField = !inSearch && !!active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+      const inOtherField = !inSearch && !!active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
       const hasTextSelection = (window.getSelection()?.toString() ?? '') !== '' ||
         (inSearch && inputRef.current!.selectionStart !== inputRef.current!.selectionEnd);
+      const binding = eventToBinding(e);
+      if (!binding) return;
+      const is = (id: ActionId) => keymap[id].includes(binding) && !(inSearch && isTypingKey(binding));
+      const stop = () => e.preventDefault();
 
       if (quickLook.open) {
         if (inOtherField) return;
-        if (e.key === 'Escape' || e.key === ' ') {
-          e.preventDefault();
-          closeQuickLook();
-        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          move(e.key === 'ArrowDown' ? 1 : -1);
-        } else if (e.key === 'Enter' && selectedItem) {
-          e.preventDefault();
-          if (e.ctrlKey) revealItem(selectedItem);
-          else openItem(selectedItem);
-        } else if (e.key.toLowerCase() === 'c' && e.ctrlKey && !hasTextSelection && selectedItem) {
-          e.preventDefault();
-          copyPath(selectedItem);
-        }
+        if (is('close_preview') || is('preview')) { stop(); closeQuickLook(); }
+        else if (is('move_down') || is('move_up')) { stop(); move(is('move_down') ? 1 : -1, true); }
+        else if (is('reveal') && selectedItem) { stop(); revealItem(selectedItem); }
+        else if (is('open') && selectedItem) { stop(); openItem(selectedItem); }
+        else if (is('copy_path') && !hasTextSelection && selectedItem) { stop(); copyPath(selectedItem); }
         return;
       }
-
       if (inOtherField) return;
 
-      if (e.ctrlKey && /^[1-5]$/.test(e.key)) {
-        e.preventDefault();
-        setCategory(CATEGORIES[Number(e.key) - 1].id);
-        return;
+      for (let n = 1; n <= 5; n++) {
+        if (is(`category_${n}` as ActionId)) { stop(); setCategory(CATEGORIES[n - 1].id); return; }
       }
-      if ((e.ctrlKey && (e.key.toLowerCase() === 'k' || e.key.toLowerCase() === 'f')) || (e.key === '/' && !inSearch)) {
-        e.preventDefault();
+      if (is('focus_search')) {
+        stop();
         inputRef.current?.focus();
         inputRef.current?.select();
         return;
       }
-      if (e.key === 'Escape') {
-        e.preventDefault();
+      if (is('list_editor')) { stop(); openListEditor(pasted ? pasted.values.map(v => [v]) : [], pasted ? 'edit' : 'new'); return; }
+      if (is('shortcuts')) { stop(); setShortcutsOpen(true); return; }
+      if (is('folders')) { stop(); setFoldersOpen(true); return; }
+      if (is('expand_all') && groups) { stop(); toggleAllGroups(); return; }
+      if (is('clear')) {
+        stop();
         if (query) {
           setQuery('');
           inputRef.current?.focus();
@@ -263,31 +445,44 @@ function Workspace() {
         }
         return;
       }
-      if (e.key.toLowerCase() === 'c' && e.ctrlKey && !hasTextSelection && selectedItem) {
-        e.preventDefault();
-        copyPath(selectedItem);
+      if (is('copy_path') && !hasTextSelection && selectedItem) { stop(); copyPath(selectedItem); return; }
+
+      if (is('move_down') || is('move_up')) {
+        stop();
+        move(is('move_down') ? 1 : -1);
+        if (inSearch) listRef.current?.focus();
         return;
       }
-      if (inSearch) return; // the input handles arrows and Enter itself
-
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        move(e.key === 'ArrowDown' ? 1 : -1);
-      } else if (e.key === ' ' && selectedItem) {
-        e.preventDefault();
-        openQuickLook(selected);
-      } else if (e.key === 'Enter' && selectedItem) {
-        e.preventDefault();
-        if (e.ctrlKey) revealItem(selectedItem);
-        else openItem(selectedItem);
-      } else if ((e.key.length === 1 || e.key === 'Backspace') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const header = selectedRow?.kind === 'header' ? selectedRow : null;
+      if (header && (is('expand') || is('collapse'))) {
+        stop();
+        toggleGroup(header.group, is('expand'));
+        return;
+      }
+      if (selectedRow?.kind === 'item' && selectedRow.group !== null && is('collapse')) {
+        stop();
+        toggleGroup(selectedRow.group, false);
+        setSelectedKey(`h:${selectedRow.group}`);
+        return;
+      }
+      if (is('reveal') && selectedItem) { stop(); revealItem(selectedItem); return; }
+      if (is('open') || is('preview')) {
+        if (header) { stop(); toggleGroup(header.group); return; }
+        if (selectedItem) {
+          stop();
+          if (is('open')) openItem(selectedItem);
+          else openQuickLook(selected);
+          return;
+        }
+      }
+      if (!inSearch && (e.key.length === 1 || e.key === 'Backspace') && !e.ctrlKey && !e.altKey && !e.metaKey) {
         // Typing anywhere goes to the search field
         inputRef.current?.focus();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, foldersOpen, quickLook.open, query, scope, selected, selectedItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook]);
+  }, [view, overlayOpen, quickLook.open, query, scope, keymap, groups, pasted, selected, selectedRow, selectedItem, move, openItem, revealItem, copyPath, openQuickLook, closeQuickLook, toggleGroup, toggleAllGroups, openListEditor]);
 
   // Corner grip to resize the frameless window
   const startResize = (e: React.PointerEvent) => {
@@ -320,10 +515,28 @@ function Workspace() {
     setRefreshTick(t => t + 1);
   };
 
+  const saveShortcuts = async (map: Keymap, hotkey: string): Promise<boolean> => {
+    try {
+      const s = await api.saveShortcuts({
+        shortcuts: keymapOverrides(map),
+        hotkey: hotkey !== settings?.hotkey ? hotkey : undefined,
+      });
+      setSettings(s);
+      setKeymap(buildKeymap(s.shortcuts));
+      toast('Keyboard shortcuts saved');
+      return true;
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      return false;
+    }
+  };
+
   const indexing = status?.phase === 'scanning' || status?.phase === 'reading';
+  const pastedVisible = pasted && pasted.query === query ? pasted : null;
+  const allOpen = !!groups && groups.length > 0 && groups.every(g => expanded.has(g.label));
 
   const emptyState = () => {
-    if (busy && !items.length) return null;
+    if (busy && !rows.length) return null;
     if (!query && indexing) {
       return (
         <div className="flex flex-col items-center gap-3 text-center fade-up">
@@ -345,16 +558,27 @@ function Workspace() {
     return (
       <div className="flex flex-col items-center gap-3 text-center fade-up" style={{ animationDuration: '360ms' }}>
         <SearchX className="w-6 h-6 text-fg-3" />
-        <div className="text-[13px] text-fg">No matches for “{query}”</div>
+        <div className="text-[13px] text-fg max-w-[460px] break-words">No matches for “{query}”</div>
         <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
           {category !== 'all' && <button type="button" className="btn !h-7" onClick={() => setCategory('all')}>Search all types</button>}
           {scope && <button type="button" className="btn !h-7" onClick={() => setScope(null)}>Search all folders</button>}
-          {mode !== 'all' && <button type="button" className="btn !h-7" onClick={() => setMode('all')}>Names and text</button>}
+          {!query.includes(':') && (
+            <button type="button" className="btn !h-7" onClick={() => setQuery(`:${query}`)} title="Without “:” only file names are searched">
+              Search the text: <span className="font-mono">:{query.length > 24 ? `${query.slice(0, 24)}…` : query}</span>
+            </button>
+          )}
           {status?.phase === 'reading' && <span className="text-[12px] text-fg-3">Text is still being read in some files.</span>}
         </div>
       </div>
     );
   };
+
+  const qlPosition = (() => {
+    if (!selectedRow || selectedRow.kind !== 'item') return { index: 0, total: 0 };
+    if (selectedRow.group === null) return { index: selectedRow.index, total: flat.total };
+    const g = groups?.[selectedRow.group];
+    return { index: selectedRow.index, total: g?.total ?? 0, label: g?.label };
+  })();
 
   return (
     <div className="relative flex flex-col h-full overflow-hidden" style={{ background: 'radial-gradient(1200px 500px at 50% -220px, rgba(124,156,255,0.07), transparent 70%), var(--bg)' }}>
@@ -373,6 +597,7 @@ function Workspace() {
         onHide={() => api.hideWindow()}
         onMaximize={() => api.toggleMaximize()}
         onOpenDataFolder={() => api.openDataFolder()}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
         onQuit={() => api.quit()}
       />
 
@@ -396,68 +621,124 @@ function Workspace() {
 
       {view === 'search' && (
         <>
-          <div className="flex flex-col gap-3 px-4 pt-3 pb-2 shrink-0 fade-up" style={{ animationDuration: '420ms' }}>
+          <div className="relative z-20 flex flex-col gap-2.5 px-4 pt-3 pb-2 shrink-0 fade-up" style={{ animationDuration: '420ms' }}>
             <CommandBar
               query={query}
               onQueryChange={setQuery}
-              mode={mode}
-              onModeChange={setMode}
               scope={scope}
               onScopeChange={setScope}
               folders={folders}
               busy={busy}
               inputRef={inputRef}
-              onArrow={dir => {
-                move(dir);
-                listRef.current?.focus();
-              }}
-              onSubmit={e => {
-                if (selectedItem) {
-                  e.preventDefault();
-                  if (e.ctrlKey) revealItem(selectedItem);
-                  else openItem(selectedItem);
-                }
-              }}
+              listKey={keymap.list_editor[0]}
+              onPasteList={grid => openListEditor(grid, 'paste')}
+              onOpenList={() => openListEditor(pastedVisible ? pastedVisible.values.map(v => [v]) : [], pastedVisible ? 'edit' : 'new')}
             />
+
+            {pastedVisible ? (
+              <div className="flex items-center gap-2 min-w-0 fade-up" style={{ animationDuration: '260ms' }}>
+                <span className="flex items-center gap-1.5 shrink-0 text-[11.5px] text-fg-3">
+                  <ClipboardList className="w-3.5 h-3.5" />
+                  <span className="num text-fg-2">{pastedVisible.values.length}</span>
+                  {pastedVisible.where === 'text' ? 'values in the text' : 'values in file names'}{pastedVisible.mode === 'groups' ? ', one row each' : ', all together'}
+                </span>
+                <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+                  {pastedVisible.values.map((v, i) => {
+                    const g = groups?.find(x => x.label === v);
+                    return (
+                      <button
+                        key={`${v}-${i}`}
+                        type="button"
+                        className="shrink-0 inline-flex items-center gap-1.5 h-[22px] px-2 rounded-md text-[11.5px] text-fg bg-surface-2 hover:bg-[var(--surface-3)] transition-colors max-w-[200px]"
+                        style={{ boxShadow: 'inset 0 0 0 1px var(--line)' }}
+                        title={pastedVisible.mode === 'groups' ? 'Open this group' : v}
+                        onClick={() => {
+                          const gi = groups?.findIndex(x => x.label === v) ?? -1;
+                          if (gi >= 0) {
+                            toggleGroup(gi, true);
+                            setSelectedKey(`h:${gi}`);
+                          }
+                        }}
+                      >
+                        <span className="truncate">{v}</span>
+                        {g && <span className={`num ${g.total ? 'text-accent' : 'text-fg-3'}`}>{g.total.toLocaleString()}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <SegmentedControl
+                  options={[
+                    { id: 'groups' as const, label: 'Rows', hint: 'One expandable row per value' },
+                    { id: 'together' as const, label: '+', hint: 'Files that hit every value' },
+                  ]}
+                  value={pastedVisible.mode}
+                  onChange={m => confirmList(pastedVisible.values, m, pastedVisible.where, pastedVisible.filter)}
+                  size="sm"
+                  className="shrink-0"
+                />
+                <button type="button" className="btn !h-7 shrink-0" onClick={() => openListEditor(pastedVisible.values.map(v => [v]), 'edit')} title="Edit the list">
+                  <Pencil className="w-3.5 h-3.5" /> Edit
+                </button>
+                <button type="button" className="icon-btn shrink-0" onClick={() => { setPasted(null); setQuery(''); inputRef.current?.focus(); }} title="Clear the list">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              chipsWorthShowing(chips) && query && <QueryChips chips={chips} />
+            )}
+
             <div className="flex items-center justify-between gap-3">
               <SegmentedControl options={CATEGORIES} value={category} onChange={setCategory} size="sm" />
               <div className="flex items-center gap-2 text-[11.5px] text-fg-3 whitespace-nowrap">
-                <span className="label-caps !text-[10px]">{query ? 'Best matches' : 'Recently changed'}</span>
+                {groups && groups.length > 0 && (
+                  <button type="button" className="flex items-center gap-1 h-6 px-1.5 rounded-md hover:text-fg hover:bg-surface-2 transition-colors" onClick={toggleAllGroups} title={`Open or close all groups${keymap.expand_all[0] ? ` (${keymap.expand_all[0]})` : ''}`}>
+                    {allOpen ? <ChevronsDownUp className="w-3.5 h-3.5" /> : <ChevronsUpDown className="w-3.5 h-3.5" />}
+                    {allOpen ? 'Close all' : 'Open all'}
+                  </button>
+                )}
+                <span className="label-caps !text-[10px]">{groups ? `${groups.length} group${groups.length === 1 ? '' : 's'}` : query ? 'Best matches' : 'Recently changed'}</span>
                 <span className="w-1 h-1 rounded-full bg-line-strong" />
                 <span>
-                  <RollingNumber value={items.length} className="font-mono text-fg-2" /> results
+                  <RollingNumber value={totalFiles} className="text-fg-2 font-medium" /> {groups ? 'files' : 'results'}
                 </span>
-                {query && <span className="font-mono">{tookMs.toFixed(0)} ms</span>}
+                {query && <span className="num">{tookMs.toFixed(0)} ms</span>}
               </div>
             </div>
           </div>
 
           <div className="relative flex-1 min-h-0 flex flex-col" onPointerMove={() => keyboardFocus && setKeyboardFocus(false)}>
-            {busy && items.length > 0 && <div className="absolute top-0 left-4 right-4 h-px overflow-hidden loading-line z-10" />}
+            {busy && rows.length > 0 && <div className="absolute top-0 left-4 right-4 h-px overflow-hidden loading-line z-10" />}
             <ResultsList
-              items={items}
+              rows={rows}
               selectedIndex={selected}
               onSelect={idx => {
-                setSelected(idx);
+                if (rows[idx]) setSelectedKey(rows[idx].key);
                 listRef.current?.focus();
               }}
               onOpen={openItem}
               onPreview={openQuickLook}
-              query={query}
+              onToggleGroup={g => toggleGroup(g)}
+              onLoadMore={loadMore}
+              termsFor={termsFor}
               folders={folders}
               keyboardFocus={keyboardFocus}
               listRef={listRef}
               empty={emptyState()}
+              previewKey={keymap.preview[0] ? bindingParts(keymap.preview[0]).join('+') : 'Preview'}
             />
           </div>
 
           <footer className="flex items-center justify-between gap-4 h-9 px-4 shrink-0 text-[11.5px] text-fg-3" style={{ borderTop: '1px solid var(--line)' }}>
             <div className="flex items-center gap-3.5 overflow-hidden whitespace-nowrap">
-              <span className="flex items-center gap-1.5"><span className="kbd">↑</span><span className="kbd">↓</span> Move</span>
-              <span className="flex items-center gap-1.5"><span className="kbd">Space</span> Preview</span>
-              <span className="flex items-center gap-1.5"><span className="kbd">↵</span> Open</span>
-              <span className="flex items-center gap-1.5"><span className="kbd">Ctrl</span><span className="kbd">↵</span> Show in folder</span>
-              <span className="hidden md:flex items-center gap-1.5"><span className="kbd">Ctrl</span><span className="kbd">C</span> Copy path</span>
+              <KeyHint keys={[keymap.move_up[0], keymap.move_down[0]]} label="Move" />
+              <KeyHint keys={[keymap.preview[0]]} label="Preview" />
+              <KeyHint keys={[keymap.open[0]]} label="Open" />
+              <KeyHint keys={[keymap.reveal[0]]} label="Show in folder" />
+              <KeyHint keys={[keymap.copy_path[0]]} label="Copy path" className="hidden md:flex" />
+              <button type="button" className="hidden lg:flex items-center gap-1.5 hover:text-fg transition-colors" onClick={() => setShortcutsOpen(true)} title="Change the keys">
+                <KeyHint keys={[keymap.shortcuts[0]]} label="Keys" />
+                {!keymap.shortcuts[0] && 'Keys'}
+              </button>
             </div>
             <div className="flex items-center gap-1.5 whitespace-nowrap" title={folders.join('\n')}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: status?.watcher_active ? 'var(--ok)' : 'var(--text-3)' }} />
@@ -472,12 +753,13 @@ function Workspace() {
           item={selectedItem}
           originRect={quickLook.origin}
           folders={folders}
-          position={{ index: selected, total: items.length }}
+          position={qlPosition}
           onClose={closeQuickLook}
           onOpen={openItem}
           onReveal={revealItem}
           onCopyPath={copyPath}
-          query={query}
+          terms={termsFor(selectedRow?.kind === 'item' ? selectedRow.group : null)}
+          keymap={keymap}
         />
       )}
 
@@ -491,6 +773,35 @@ function Workspace() {
         }}
         onChanged={refreshAfterChange}
       />
+
+      {listEditor && (
+        <ListEditor
+          grid={listEditor.grid}
+          mode={listEditor.mode}
+          where={listEditor.where}
+          filter={listEditor.filter}
+          source={listEditor.source}
+          onConfirm={confirmList}
+          onClose={() => {
+            setListEditor(null);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+      )}
+
+      {shortcutsOpen && (
+        <ShortcutsPanel
+          keymap={keymap}
+          hotkey={settings?.hotkey ?? 'alt+space'}
+          defaultHotkey={settings?.default_hotkey ?? 'alt+space'}
+          canSetHotkey={!!settings?.can_set_hotkey}
+          onSave={saveShortcuts}
+          onClose={() => {
+            setShortcutsOpen(false);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+      )}
 
       <div
         onPointerDown={startResize}

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FolderCog, FolderOpen, Maximize2, Minus, MoreHorizontal, Power, RefreshCw, X } from 'lucide-react';
+import { FolderCog, FolderOpen, Keyboard, Maximize2, Minus, MoreHorizontal, Power, RefreshCw, X } from 'lucide-react';
 import { IndexerStatus } from '../api';
 import { RollingNumber } from './motion/RollingNumber';
 import { baseName } from '../utils/paths';
@@ -12,6 +12,7 @@ interface TitleBarProps {
   onHide: () => void;
   onMaximize: () => void;
   onOpenDataFolder: () => void;
+  onOpenShortcuts: () => void;
   onQuit: () => void;
 }
 
@@ -40,7 +41,7 @@ export const StatusPill: React.FC<{ status: IndexerStatus | null }> = ({ status 
       <span className={`w-1.5 h-1.5 rounded-full ${scanning || reading ? 'live-dot' : ''}`} style={{ background: dot }} />
       <span className="text-fg-3">{label}</span>
       <span className="w-px h-3 bg-line-strong" />
-      <RollingNumber value={status.total_indexed} className="font-mono text-[11.5px] text-fg" />
+      <RollingNumber value={status.total_indexed} className="text-[12px] font-semibold text-fg" />
       <span className="text-fg-3">files</span>
     </div>
   );
@@ -54,6 +55,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
   onHide,
   onMaximize,
   onOpenDataFolder,
+  onOpenShortcuts,
   onQuit,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -132,6 +134,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             >
               {showFolderButton && menuItem(<FolderCog className="w-4 h-4" />, 'Working folders…', onOpenFolders)}
               {showFolderButton && menuItem(<RefreshCw className="w-4 h-4" />, 'Re-index all folders', onReindexAll)}
+              {showFolderButton && menuItem(<Keyboard className="w-4 h-4" />, 'Keyboard shortcuts…', onOpenShortcuts)}
               {menuItem(<FolderOpen className="w-4 h-4" />, 'Open data folder', onOpenDataFolder)}
               <div className="h-px my-1 bg-line" />
               {menuItem(<Power className="w-4 h-4" />, 'Quit Peek & Grep', onQuit, true)}

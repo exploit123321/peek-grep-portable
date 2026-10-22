@@ -13,7 +13,7 @@ export const RollingNumber: React.FC<RollingNumberProps> = ({ value, className }
   const text = Math.max(0, Math.round(value)).toLocaleString('en-US');
   const chars = text.split('');
   return (
-    <span className={`inline-flex tabular-nums ${className ?? ''}`} aria-label={text}>
+    <span className={`inline-flex num leading-[1.2em] ${className ?? ''}`} aria-label={text}>
       {chars.map((ch, i) => {
         // Key from the right so that units stay in place when the number grows
         const key = chars.length - i;
@@ -27,7 +27,7 @@ export const RollingNumber: React.FC<RollingNumberProps> = ({ value, className }
         const d = Number(ch);
         return (
           <span key={`d${key}`} className="roll-digit" aria-hidden>
-            <span className="roll-strip" style={{ transform: `translateY(-${d}em)` }}>
+            <span className="roll-strip" style={{ transform: `translateY(-${d * 1.2}em)` }}>
               {DIGITS.map(n => (
                 <span key={n}>{n}</span>
               ))}

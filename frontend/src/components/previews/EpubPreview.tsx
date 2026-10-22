@@ -48,7 +48,7 @@ export const EpubPreview: React.FC<{ filename: string; epubData?: EpubData }> = 
               <button type="button" className="icon-btn" disabled={index === 0} onClick={() => setIndex(i => i - 1)} title="Previous chapter (←)">
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="font-mono text-[11.5px] text-fg-3 w-14 text-center">{index + 1} / {chapters.length}</span>
+              <span className="num text-[11.5px] text-fg-3 w-14 text-center">{index + 1} / {chapters.length}</span>
               <button type="button" className="icon-btn" disabled={index >= chapters.length - 1} onClick={() => setIndex(i => i + 1)} title="Next chapter (→)">
                 <ChevronRight className="w-4 h-4" />
               </button>

@@ -101,6 +101,7 @@ from app.main import (  # noqa: E402
     app,
     set_get_window_size_callback,
     set_hide_window_callback,
+    set_hotkey_callback,
     set_open_data_folder_callback,
     set_pick_folders_callback,
     set_quit_callback,
@@ -108,6 +109,7 @@ from app.main import (  # noqa: E402
     set_show_window_callback,
     set_toggle_maximize_callback,
 )
+from app.screens import place_window  # noqa: E402
 from app.state import index_manager, settings_store  # noqa: E402
 
 # Global State
@@ -123,6 +125,7 @@ quitting = False
 pending_js: list = []           # scripts for the next page load (for example "open the folders panel")
 target_url = ""
 _mutex_handle = None
+_hotkey_handle = None           # the registered global show/hide key
 
 
 # -- single instance ---------------------------------------------------------------
@@ -233,6 +236,90 @@ def focus_window_native():
         pass
 
 
+# -- screens -----------------------------------------------------------------------
+# The window opens on a screen that is on: the screen with the mouse pointer. A remembered
+# position on another screen (or on a screen that was switched off or unplugged) is moved
+# there, with the same place on the screen, and the size is kept inside the screen.
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT), ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+def _screen_scale() -> float:
+    """Logical-to-physical scale that pywebview uses for this (system DPI aware) process."""
+    try:
+        return max(1.0, ctypes.windll.user32.GetDpiForSystem() / 96.0)
+    except Exception:
+        return 1.0
+
+
+def _work_area(x: int, y: int, nearest: bool):
+    """(monitor handle, (left, top, right, bottom)) of the screen at a physical point."""
+    try:
+        user32 = ctypes.windll.user32
+        user32.MonitorFromPoint.restype = ctypes.c_void_p
+        user32.MonitorFromPoint.argtypes = [_POINT, ctypes.c_ulong]
+        monitor = user32.MonitorFromPoint(_POINT(int(x), int(y)), 2 if nearest else 0)
+        if not monitor:
+            return None
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not user32.GetMonitorInfoW(ctypes.c_void_p(monitor), ctypes.byref(info)):
+            return None
+        r = info.rcWork
+        return monitor, (r.left, r.top, r.right, r.bottom)
+    except Exception:
+        return None
+
+
+def _cursor_area():
+    try:
+        pt = _POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            return _work_area(pt.x, pt.y, nearest=True)
+    except Exception:
+        pass
+    return None
+
+
+def window_placement(position, size):
+    """Where the window opens: ((x, y), (width, height)) in logical pixels, or None for the default."""
+    scale = _screen_scale()
+    target = _cursor_area() if settings_store.open_on_mouse_monitor else None
+    current = nearest = None
+    if position:
+        cx = position[0] * scale + size[0] * scale / 2
+        cy = position[1] * scale + size[1] * scale / 2
+        current = _work_area(cx, cy, nearest=False)
+        nearest = _work_area(cx, cy, nearest=True)
+    return place_window(position, size, scale, target, current, nearest)
+
+
+def _place_hidden_window() -> None:
+    """Move a hidden (not released) window to the screen with the mouse pointer before it shows."""
+    if not main_window or is_maximized_state:
+        return
+    try:
+        placed = window_placement((main_window.x, main_window.y), (main_window.width, main_window.height))
+        if not placed:
+            return
+        (x, y), (w, h) = placed
+        if (w, h) != (main_window.width, main_window.height):
+            main_window.resize(w, h)
+        if (x, y) != (main_window.x, main_window.y):
+            main_window.move(x, y)
+    except Exception as e:
+        print(f"[Desktop App] Could not place the window: {e}")
+
+
 def show_window():
     """Show the window and focus the search input. Opens a new window if it was released."""
     global window_visible
@@ -241,6 +328,8 @@ def show_window():
         return
     if main_window:
         try:
+            if not window_visible:
+                _place_hidden_window()
             main_window.show()
             main_window.restore()
             window_visible = True
@@ -406,11 +495,14 @@ def generate_tray_icon() -> Image.Image:
     return img
 
 
+def hotkey_label() -> str:
+    return settings_store.hotkey.title().replace("Windows", "Win")
+
+
 def setup_tray():
     global tray_icon
-    hotkey = settings_store.hotkey.title()
     menu = pystray.Menu(
-        pystray.MenuItem(f"Show / hide ({hotkey})", lambda: toggle_window(), default=True),
+        pystray.MenuItem(lambda item: f"Show / hide ({hotkey_label()})", lambda: toggle_window(), default=True),
         pystray.MenuItem("Working folders...", lambda: open_folders_panel()),
         pystray.MenuItem("Re-index all folders...", confirm_and_reindex),
         pystray.Menu.SEPARATOR,
@@ -423,16 +515,34 @@ def setup_tray():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit Peek & Grep", exit_application),
     )
-    tray_icon = pystray.Icon("peek_grep_portable", generate_tray_icon(), f"{APP_TITLE} ({hotkey})", menu)
+    tray_icon = pystray.Icon("peek_grep_portable", generate_tray_icon(), f"{APP_TITLE} ({hotkey_label()})", menu)
     threading.Thread(target=tray_icon.run, daemon=True).start()
+
+
+def register_hotkey(hotkey: str) -> None:
+    """Use a new global show/hide key. The old key stays when Windows refuses the new one."""
+    global _hotkey_handle
+    # suppress=True keeps Windows from opening the active window's system menu
+    handle = keyboard.add_hotkey(hotkey, toggle_window, suppress=True)
+    if _hotkey_handle is not None:
+        try:
+            keyboard.remove_hotkey(_hotkey_handle)
+        except Exception:
+            pass
+    _hotkey_handle = handle
+    print(f"[Desktop App] Registered global hotkey: {hotkey}")
+    if tray_icon:
+        try:
+            tray_icon.title = f"{APP_TITLE} ({hotkey.title()})"
+            tray_icon.update_menu()
+        except Exception:
+            pass
 
 
 def setup_global_hotkey():
     hotkey = settings_store.hotkey
     try:
-        # suppress=True keeps Windows from opening the active window's system menu
-        keyboard.add_hotkey(hotkey, toggle_window, suppress=True)
-        print(f"[Desktop App] Registered global hotkey: {hotkey}")
+        register_hotkey(hotkey)
     except Exception as e:
         print(f"[Desktop App] Could not register global hotkey {hotkey}: {e}")
 
@@ -454,13 +564,18 @@ def on_window_loaded():
 def create_main_window(hidden: bool = False) -> None:
     global main_window
     kwargs = {}
-    if last_position:
+    size = last_window_size
+    placed = window_placement(last_position, last_window_size)
+    if placed:
+        (x, y), size = placed
+        kwargs = {"x": x, "y": y}
+    elif last_position:
         kwargs = {"x": last_position[0], "y": last_position[1]}
     main_window = webview.create_window(
         title=APP_TITLE,
         url=target_url,
-        width=last_window_size[0],
-        height=last_window_size[1],
+        width=max(MIN_SIZE[0], size[0]),
+        height=max(MIN_SIZE[1], size[1]),
         min_size=MIN_SIZE,
         resizable=True,
         frameless=True,
@@ -483,6 +598,12 @@ def main():
     print(f"  Data folder: {DATA_DIR}")
     print("==================================================")
 
+    # Same pixel units as pywebview from the start (it sets this too), so screen math matches
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
     if not acquire_single_instance():
         if signal_running_instance():
             return
@@ -500,6 +621,7 @@ def main():
     set_pick_folders_callback(pick_folders)
     set_open_data_folder_callback(open_data_folder)
     set_quit_callback(exit_application)
+    set_hotkey_callback(register_hotkey)
 
     if not wait_for_backend(server_port):
         message_box("The search engine did not start. See app.log in the data folder.", flags=0x10)

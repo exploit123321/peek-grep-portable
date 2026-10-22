@@ -127,6 +127,34 @@ class SettingsStore:
     def hotkey(self) -> str:
         return str(self._data.get("hotkey") or DEFAULT_HOTKEY)
 
+    def set_hotkey(self, hotkey: str) -> None:
+        with self._lock:
+            self._data["hotkey"] = hotkey
+            self.save()
+
+    @property
+    def shortcuts(self) -> Dict[str, List[str]]:
+        """In-app keys the user changed: {action: ["Ctrl+K", ...]}. Missing actions use the defaults."""
+        raw = self._data.get("shortcuts")
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): [str(b) for b in v if isinstance(b, str)][:4]
+                for k, v in raw.items() if isinstance(v, list)}
+
+    def set_shortcuts(self, shortcuts: Dict[str, List[str]]) -> None:
+        cleaned = {str(k)[:64]: [str(b)[:40] for b in v][:4] for k, v in shortcuts.items()}
+        with self._lock:
+            if cleaned:
+                self._data["shortcuts"] = cleaned
+            else:
+                self._data.pop("shortcuts", None)
+            self.save()
+
+    @property
+    def open_on_mouse_monitor(self) -> bool:
+        """Open the window on the screen with the mouse pointer (not on a screen that is off)."""
+        return bool(self._data.get("open_on_mouse_monitor", True))
+
     @property
     def release_window_on_hide(self) -> bool:
         """Close the WebView while the app is in the tray (saves about 190 MB; reopening takes about 1 s)."""

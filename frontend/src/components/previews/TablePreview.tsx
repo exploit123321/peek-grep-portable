@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Delimiter } from '../../api';
+import { HighlightTerm } from '../../utils/query';
 import { SegmentedControl } from '../motion/SegmentedControl';
 import { VirtualGrid } from '../VirtualGrid';
 
@@ -28,10 +29,10 @@ interface TablePreviewProps {
   tableData: TableData;
   delimiter: Delimiter;
   onDelimiterChange: (d: Delimiter) => void;
-  query?: string;
+  terms?: HighlightTerm[];
 }
 
-export const TablePreview: React.FC<TablePreviewProps> = ({ tableData, delimiter, onDelimiterChange, query }) => {
+export const TablePreview: React.FC<TablePreviewProps> = ({ tableData, delimiter, onDelimiterChange, terms }) => {
   const [filter, setFilter] = useState('');
   const columns = useMemo(() => {
     const width = Math.max(tableData.columns.length, ...tableData.rows.slice(0, 500).map(r => r.length));
@@ -69,7 +70,7 @@ export const TablePreview: React.FC<TablePreviewProps> = ({ tableData, delimiter
         </div>
       </div>
       <div className="flex-1 min-h-0">
-        <VirtualGrid columns={columns} rows={rows.map(x => x.r)} rowLabel={i => rows[i]?.n} query={query} />
+        <VirtualGrid columns={columns} rows={rows.map(x => x.r)} rowLabel={i => rows[i]?.n} terms={terms} />
         {rows.length === 0 && <div className="py-10 text-center text-fg-3 text-[12.5px]">No rows match “{filter}”</div>}
       </div>
     </div>

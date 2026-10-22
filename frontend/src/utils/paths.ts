@@ -1,5 +1,7 @@
 // Path helpers for display: folder names, relative breadcrumbs, and match highlighting.
 
+import { HighlightTerm, nameTerms, pickRegexes } from './query';
+
 const SEP = '\\';
 
 export function baseName(path: string): string {
@@ -50,20 +52,32 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Filename with query terms wrapped in <mark> (HTML-escaped). */
-export function highlightName(name: string, query: string): string {
-  const q = query.trim();
-  if (!q) return escapeHtml(name);
-  const lower = name.toLowerCase();
-  const terms = lower.includes(q.toLowerCase()) ? [q] : q.split(/\s+/).filter(t => t.length > 1);
-  if (!terms.length) return escapeHtml(name);
-  const re = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
-  return name
-    .split(re)
-    .map((part, i) => (i % 2 === 1 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)))
-    .join('');
+/** Filename with the name terms of the search wrapped in <mark> (HTML-escaped). */
+export function highlightName(name: string, terms: HighlightTerm[]): string {
+  const regexes = pickRegexes(nameTerms(terms), 'name', re => {
+    re.lastIndex = 0;
+    return re.test(name);
+  });
+  if (!regexes.length) return escapeHtml(name);
+  const marks = new Array<boolean>(name.length).fill(false);
+  for (const re of regexes) {
+    re.lastIndex = 0;
+    for (let m = re.exec(name); m; m = re.exec(name)) {
+      if (!m[0].length) {
+        re.lastIndex++;
+        continue;
+      }
+      for (let i = m.index; i < m.index + m[0].length; i++) marks[i] = true;
+    }
+  }
+  let out = '';
+  let open = false;
+  for (let i = 0; i < name.length; i++) {
+    if (marks[i] !== open) {
+      out += marks[i] ? '<mark>' : '</mark>';
+      open = marks[i];
+    }
+    out += escapeHtml(name[i]);
+  }
+  return out + (open ? '</mark>' : '');
 }

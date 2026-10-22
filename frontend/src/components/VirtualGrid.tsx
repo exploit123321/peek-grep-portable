@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
-import { searchTerms } from '../utils/searchHits';
+import { HighlightTerm, pickRegexes, textTerms } from '../utils/query';
 
 // A table that holds all rows but draws only the visible ones, so large sheets scroll smoothly.
 // Search hits come from the data, so a hit in any row can be found and scrolled to.
@@ -21,7 +21,7 @@ interface VirtualGridProps {
   columns: string[];
   rows: string[][];
   rowLabel?: (index: number) => React.ReactNode;
-  query?: string;
+  terms?: HighlightTerm[];
   // Editing (optional)
   editable?: boolean;
   locked?: Set<string>;
@@ -42,28 +42,37 @@ function columnWidths(columns: string[], rows: string[][], extra: string[][]): n
   });
 }
 
-function splitHits(text: string, terms: string[], current: boolean): React.ReactNode {
-  if (!terms.length || !text) return text;
-  const lower = text.toLowerCase();
+function splitHits(text: string, regexes: RegExp[], current: boolean): React.ReactNode {
+  if (!regexes.length || !text) return text;
+  const spans: [number, number][] = [];
+  for (const re of regexes) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      if (!m[0].length) { re.lastIndex++; continue; }
+      spans.push([m.index, m.index + m[0].length]);
+    }
+  }
+  if (!spans.length) return text;
+  spans.sort((a, b) => a[0] - b[0]);
   const out: React.ReactNode[] = [];
   let pos = 0;
-  while (pos < text.length) {
-    let best = -1, len = 0;
-    for (const t of terms) {
-      const i = lower.indexOf(t, pos);
-      if (i >= 0 && (best < 0 || i < best)) { best = i; len = t.length; }
-    }
-    if (best < 0) break;
-    if (best > pos) out.push(text.slice(pos, best));
-    out.push(<mark key={best} className={current ? 'grid-hit-current' : 'grid-hit'}>{text.slice(best, best + len)}</mark>);
-    pos = best + len;
+  for (const [a, b] of spans) {
+    if (a < pos) continue;
+    if (a > pos) out.push(text.slice(pos, a));
+    out.push(<mark key={a} className={current ? 'grid-hit-current' : 'grid-hit'}>{text.slice(a, b)}</mark>);
+    pos = b;
   }
   if (pos < text.length) out.push(text.slice(pos));
   return out;
 }
 
+const cellHas = (v: string, regexes: RegExp[]) => regexes.some(re => {
+  re.lastIndex = 0;
+  return re.test(v);
+});
+
 export const VirtualGrid: React.FC<VirtualGridProps> = ({
-  columns, rows, rowLabel, query = '', editable, locked, edited, onEdit, selectedRow, onSelectRow,
+  columns, rows, rowLabel, terms, editable, locked, edited, onEdit, selectedRow, onSelectRow,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -73,30 +82,25 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const report = useContext(HitsContext);
 
-  // Hits from the data: the whole query, or its words when the whole query has no hit
-  const { hits, terms } = useMemo(() => {
-    const all = searchTerms(query);
-    if (!all.length) return { hits: [] as [number, number][], terms: [] as string[] };
-    const scan = (list: string[]) => {
-      const found: [number, number][] = [];
-      for (let r = 0; r < rows.length && found.length < 20000; r++) {
-        const row = rows[r];
-        for (let c = 0; c < row.length; c++) {
-          const v = row[c];
-          if (v && list.some(t => v.toLowerCase().includes(t))) found.push([r, c]);
-        }
+  // Hits from the data: per term the whole term, or its words when the whole term has no hit
+  const { hits, regexes } = useMemo(() => {
+    const list = textTerms(terms ?? []);
+    if (!list.length) return { hits: [] as [number, number][], regexes: [] as RegExp[] };
+    const anyCell = (re: RegExp) => rows.some(row => row.some(v => !!v && cellHas(v, [re])));
+    const picked = pickRegexes(list, 'text', anyCell);
+    const found: [number, number][] = [];
+    for (let r = 0; r < rows.length && found.length < 20000; r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        const v = row[c];
+        if (v && cellHas(v, picked)) found.push([r, c]);
       }
-      return found;
-    };
-    let list = [all[0]];
-    let found = scan(list);
-    if (!found.length && all.length > 1) {
-      list = all.slice(1);
-      found = scan(list);
     }
-    return { hits: found, terms: list };
-  }, [rows, query]);
+    return { hits: found, regexes: picked };
+  }, [rows, terms]);
   const [hitIndex, setHitIndex] = useState(0);
+  const hitRef = useRef(0);
+  hitRef.current = hitIndex;
   const widths = useMemo(
     () => columnWidths(columns, rows, hits.slice(0, 200).map(([r]) => rows[r])),
     [columns, rows, hits],
@@ -127,7 +131,9 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
       count: hits.length,
       index: hitIndex,
       go: step => {
-        const next = (hitIndex + step + hits.length) % hits.length;
+        // From the ref: two quick presses come before this report is renewed
+        const next = (hitRef.current + step + hits.length) % hits.length;
+        hitRef.current = next;
         setHitIndex(next);
         scrollToCell(hits[next][0], hits[next][1]);
       },
@@ -194,7 +200,7 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
         requestAnimationFrame(() => setScrollTop(top));
       }}
     >
-      <table className="border-collapse font-mono text-[12px]" style={{ tableLayout: 'fixed', width: totalWidth }}>
+      <table className="border-collapse num text-[12.5px]" style={{ tableLayout: 'fixed', width: totalWidth }}>
         <colgroup>
           <col style={{ width: 48 }} />
           {widths.map((w, i) => <col key={i} style={{ width: w }} />)}
@@ -253,12 +259,12 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
                             else if (e.key === 'Tab') { e.preventDefault(); commit([0, e.shiftKey ? -1 : 1]); }
                             else if (e.key === 'Escape') { e.preventDefault(); setActive(null); }
                           }}
-                          className="absolute inset-0 w-full px-3 bg-[#101016] text-fg outline-none font-mono text-[12px]"
+                          className="absolute inset-0 w-full px-3 bg-[#101016] text-fg outline-none num text-[12.5px]"
                         />
                       ) : (
                         <>
                           {isLocked && <Lock className="inline w-3 h-3 mr-1 -mt-0.5 opacity-60" />}
-                          {terms.length ? splitHits(value, terms, isCurrent) : value}
+                          {regexes.length ? splitHits(value, regexes, isCurrent) : value}
                         </>
                       )}
                     </td>

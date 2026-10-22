@@ -1,20 +1,41 @@
 // Find search hits in a preview and mark them with the CSS Custom Highlight API.
 // The API paints text ranges without changing the DOM, so React views stay intact.
+// Terms come from the parsed search (wildcards, "+" parts, literals) or from "find in preview".
+
+import { HighlightTerm, pickRegexes, textTerms } from './query';
 
 const SKIP = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'NOSCRIPT']);
-const MAX_HITS = 2000;
+const MAX_HITS = 5000;
 
-/** Terms to look for: the whole query, or its words when the whole query is not in the text. */
-export function searchTerms(query: string): string[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  const words = q.split(/\s+/).filter(w => w.length > 1);
-  return [q, ...words.filter(w => w !== q)];
+/** Hit spans [start, end) of the terms in a text, sorted, without overlaps. */
+export function textSpans(text: string, terms: HighlightTerm[], limit = MAX_HITS): [number, number][] {
+  const regexes = pickRegexes(textTerms(terms), 'text', re => {
+    re.lastIndex = 0;
+    return re.test(text);
+  });
+  const spans: [number, number][] = [];
+  for (const re of regexes) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m && spans.length < limit; m = re.exec(text)) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      spans.push([m.index, m.index + m[0].length]);
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const merged: [number, number][] = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] < last[1]) last[1] = Math.max(last[1], s[1]);
+    else merged.push([s[0], s[1]]);
+  }
+  return merged;
 }
 
-export function findHits(root: HTMLElement, query: string): Range[] {
-  const terms = searchTerms(query);
-  if (!terms.length) return [];
+export function findHits(root: HTMLElement, terms: HighlightTerm[]): Range[] {
+  if (!textTerms(terms).length) return [];
 
   const nodes: Text[] = [];
   const starts: number[] = [];
@@ -27,7 +48,6 @@ export function findHits(root: HTMLElement, query: string): Range[] {
     starts.push(text.length);
     text += (n as Text).data;
   }
-  const lower = text.toLowerCase();
 
   // Map an offset in the joined text back to (node, offset)
   const locate = (pos: number): [Text, number] => {
@@ -40,21 +60,7 @@ export function findHits(root: HTMLElement, query: string): Range[] {
     return [nodes[lo], pos - starts[lo]];
   };
 
-  const spansOf = (list: string[]): [number, number][] => {
-    const spans: [number, number][] = [];
-    for (const term of list) {
-      for (let i = lower.indexOf(term); i >= 0 && spans.length < MAX_HITS; i = lower.indexOf(term, i + term.length)) {
-        spans.push([i, i + term.length]);
-      }
-    }
-    return spans.sort((a, b) => a[0] - b[0]);
-  };
-
-  // The whole query first; single words only when the whole query has no hit
-  let spans = spansOf([terms[0]]);
-  if (!spans.length && terms.length > 1) spans = spansOf(terms.slice(1));
-
-  return spans.map(([a, b]) => {
+  return textSpans(text, terms).map(([a, b]) => {
     const range = document.createRange();
     const [sn, so] = locate(a);
     const [en, eo] = locate(b - 1);

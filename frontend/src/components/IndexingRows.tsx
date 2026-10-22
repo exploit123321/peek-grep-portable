@@ -34,7 +34,7 @@ export const IndexingRows: React.FC<{ status: IndexerStatus | null }> = ({ statu
                 <span className="truncate font-mono text-[11px] text-fg-3">{f.path}</span>
               </div>
               <div className="flex items-center gap-2.5 shrink-0 text-[12px]">
-                {f.files > 0 && <RollingNumber value={f.files} className="font-mono text-fg-2" />}
+                {f.files > 0 && <RollingNumber value={f.files} className="text-fg-2" />}
                 {failed ? (
                   <span className="flex items-center gap-1.5 text-warn">
                     <AlertTriangle className="w-3.5 h-3.5" /> {f.exists ? 'Cannot read' : 'Not found'}
@@ -63,7 +63,7 @@ export const IndexingRows: React.FC<{ status: IndexerStatus | null }> = ({ statu
           <span className="text-fg-2">
             {scanning ? 'Reading names first. Text comes next.' : content.pending ? 'Reading text inside files' : 'Text index is complete'}
           </span>
-          <span className="font-mono text-fg-3">
+          <span className="num text-fg-3">
             <RollingNumber value={content.indexed} /> / <RollingNumber value={totalContent} />
           </span>
         </div>

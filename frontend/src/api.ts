@@ -1,8 +1,9 @@
 // Typed calls to the local backend and to the desktop window bridge (pywebview).
 
+import type { HighlightTerm } from './utils/query';
+
 export type Category = 'all' | 'code' | 'docs' | 'data' | 'media';
 export type Delimiter = 'auto' | 'comma' | 'semicolon' | 'tab' | 'colon' | 'pipe' | 'space';
-export type SearchMode = 'all' | 'filename' | 'content';
 
 export interface SearchItem {
   path: string;
@@ -16,11 +17,48 @@ export interface SearchItem {
   category: string;
 }
 
+export interface ExplainChip {
+  kind: 'ext' | 'not-ext' | 'name' | 'not-name' | 'exact' | 'not-exact' | 'text' | 'not-text' | 'groups';
+  text: string;
+  literal: boolean;
+}
+
+export interface SearchGroup {
+  label: string;
+  total: number;
+  offset: number;
+  has_more: boolean;
+  results: SearchItem[];
+  highlight: HighlightTerm[];
+}
+
 export interface SearchResponse {
   query: string;
   total: number;
   took_ms: number;
   results: SearchItem[];
+  offset: number;
+  has_more: boolean;
+  grouped: boolean;
+  groups: SearchGroup[];
+  highlight: HighlightTerm[];
+  explain: ExplainChip[];
+}
+
+export interface AppSettings {
+  hotkey: string;
+  default_hotkey: string;
+  shortcuts: Record<string, string[]>;
+  can_set_hotkey: boolean;
+}
+
+export interface SearchParams {
+  q: string;
+  type: Category;
+  folder?: string | null;
+  offset?: number;
+  limit?: number;
+  group?: number | null;
 }
 
 export type FolderState = 'idle' | 'queued' | 'scanning' | 'done' | 'stopped' | 'missing' | 'error';
@@ -125,11 +163,20 @@ export const api = {
       'PUT',
     ),
   reindex: (folder?: string) => post<{ queued: string[] }>('/api/reindex', folder ? { folder } : {}),
-  search: (params: { q: string; mode: SearchMode; type: Category; folder?: string | null }, signal?: AbortSignal) => {
-    const qs = new URLSearchParams({ q: params.q, mode: params.mode, type_filter: params.type, limit: '60' });
+  search: (params: SearchParams, signal?: AbortSignal) => {
+    const qs = new URLSearchParams({
+      q: params.q,
+      type_filter: params.type,
+      limit: String(params.limit ?? 60),
+      offset: String(params.offset ?? 0),
+    });
     if (params.folder) qs.set('folder', params.folder);
+    if (params.group !== undefined && params.group !== null) qs.set('group', String(params.group));
     return request<SearchResponse>(`/api/search?${qs.toString()}`, { signal });
   },
+  settings: () => request<AppSettings>('/api/settings'),
+  saveShortcuts: (body: { hotkey?: string; shortcuts?: Record<string, string[]> }) =>
+    post<AppSettings>('/api/settings/shortcuts', body, 'PUT'),
   preview: (path: string, signal?: AbortSignal, delimiter: Delimiter = 'auto', quick = false) =>
     request<PreviewPayload>(`/api/preview?path=${encodeURIComponent(path)}&delimiter=${delimiter}${quick ? '&quick=true' : ''}`, { signal }),
   open: (path: string) => post<{ message: string }>('/api/actions/open', { path }),

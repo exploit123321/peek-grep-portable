@@ -28,7 +28,7 @@ export function SegmentedControl<T extends string>({
 }: SegmentedControlProps<T>) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [rect, setRect] = useState({ left: 0, width: 0, ready: false });
+  const [rect, setRect] = useState({ left: 0, width: 0, wrap: 0, ready: false });
   const [glow, setGlow] = useState<{ x: number; y: number; on: boolean }>({ x: 0, y: 0, on: false });
 
   const activeIndex = Math.max(0, options.findIndex(o => o.id === value));
@@ -38,7 +38,17 @@ export function SegmentedControl<T extends string>({
       const el = itemRefs.current[activeIndex];
       const wrap = wrapRef.current;
       if (!el || !wrap) return;
-      setRect({ left: el.offsetLeft, width: el.offsetWidth, ready: true });
+      // Measure against the bar itself: the labels sit in an inner row inside the bar's padding,
+      // so offsetLeft (relative to that row) put the pill 2 px left of its label
+      const box = el.getBoundingClientRect();
+      const outer = wrap.getBoundingClientRect();
+      const scale = outer.width ? wrap.offsetWidth / outer.width : 1;
+      setRect({
+        left: (box.left - outer.left) * scale,
+        width: box.width * scale,
+        wrap: wrap.offsetWidth,
+        ready: true,
+      });
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -48,8 +58,7 @@ export function SegmentedControl<T extends string>({
 
   const h = size === 'sm' ? 'h-7 text-[12px]' : 'h-8 text-[12.5px]';
   const pad = size === 'sm' ? 'px-2.5' : 'px-3';
-  const wrapWidth = wrapRef.current?.offsetWidth ?? 0;
-  const clipRight = Math.max(0, wrapWidth - rect.left - rect.width);
+  const clipRight = Math.max(0, rect.wrap - rect.left - rect.width);
   const transition = rect.ready ? '320ms var(--ease-spring)' : '0ms';
 
   const renderLabels = (dark: boolean) =>
@@ -102,8 +111,8 @@ export function SegmentedControl<T extends string>({
         style={{
           left: rect.left,
           width: rect.width,
-          background: 'linear-gradient(180deg, #f4f5fb, #d9dcea)',
-          boxShadow: '0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 14px -6px rgba(124,156,255,0.55)',
+          background: 'linear-gradient(180deg, #eef0f8, #d6d9e6)',
+          boxShadow: '0 1px 0 rgba(255,255,255,0.55) inset, 0 1px 3px rgba(0,0,0,0.45)',
           transition: `left ${transition}, width ${transition}`,
           opacity: rect.ready ? 1 : 0,
         }}
@@ -115,7 +124,7 @@ export function SegmentedControl<T extends string>({
         aria-hidden
         className="absolute inset-0 p-0.5 inline-flex items-center pointer-events-none z-[2]"
         style={{
-          background: 'linear-gradient(180deg, #f4f5fb, #d9dcea)',
+          background: 'linear-gradient(180deg, #eef0f8, #d6d9e6)',
           clipPath: `inset(2px ${clipRight}px 2px ${rect.left}px round 999px)`,
           transition: `clip-path ${transition}`,
           opacity: rect.ready ? 1 : 0,

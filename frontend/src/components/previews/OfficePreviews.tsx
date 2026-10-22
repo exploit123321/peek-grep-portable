@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { VirtualGrid } from '../VirtualGrid';
 import { SheetData, SlideData } from '../../api';
 import { sanitizeHtml } from '../../utils/sanitize';
+import { HighlightTerm, pickRegexes, textTerms } from '../../utils/query';
 
 // Word: the text, headings, lists, and tables (no page layout or images)
 export const DocumentPreview: React.FC<{ html: string }> = ({ html }) => {
@@ -20,14 +21,26 @@ export const DocumentPreview: React.FC<{ html: string }> = ({ html }) => {
 
 // Excel: one tab per sheet, a grid with column letters and row numbers like Excel.
 // The whole sheet is loaded; only the visible rows are drawn.
-export const WorkbookPreview: React.FC<{ sheets: SheetData[]; query?: string }> = ({ sheets, query }) => {
-  // Start on the first sheet that has the searched text
-  const [index, setIndex] = useState(() => {
-    const q = (query ?? '').trim().toLowerCase();
-    if (!q) return 0;
-    const i = sheets.findIndex(s => s.name.toLowerCase().includes(q) || s.rows.some(r => r.some(c => c.toLowerCase().includes(q))));
-    return Math.max(0, i);
-  });
+function sheetHasHit(sheet: SheetData, list: HighlightTerm[]): boolean {
+  const test = (re: RegExp, v: string) => { re.lastIndex = 0; return re.test(v); };
+  const cells = [sheet.name, ...sheet.rows.flat()];
+  const regexes = pickRegexes(list, 'text', re => cells.some(v => !!v && test(re, v)));
+  return cells.some(v => !!v && regexes.some(re => test(re, v)));
+}
+
+export const WorkbookPreview: React.FC<{ sheets: SheetData[]; terms?: HighlightTerm[] }> = ({ sheets, terms }) => {
+  const [index, setIndex] = useState(0);
+  // The first sheet with a hit; a new search (or find) moves on when this sheet has none
+  const termsKey = JSON.stringify(terms ?? []);
+  useEffect(() => {
+    const list = textTerms(terms ?? []);
+    if (!list.length) return;
+    setIndex(current => {
+      if (sheets[current] && sheetHasHit(sheets[current], list)) return current;
+      const i = sheets.findIndex(sh => sheetHasHit(sh, list));
+      return i >= 0 ? i : current;
+    });
+  }, [termsKey, sheets]); // eslint-disable-line react-hooks/exhaustive-deps
   const sheet = sheets[Math.min(index, sheets.length - 1)];
   if (!sheet) return <div className="py-20 text-center text-fg-3">This workbook has no sheets.</div>;
   const shown = sheet.rows.length;
@@ -49,7 +62,7 @@ export const WorkbookPreview: React.FC<{ sheets: SheetData[]; query?: string }> 
         </span>
       </div>
       <div className="flex-1 min-h-0">
-        <VirtualGrid key={index} columns={sheet.columns} rows={sheet.rows} query={query} />
+        <VirtualGrid key={index} columns={sheet.columns} rows={sheet.rows} terms={terms} />
       </div>
       {sheets.length > 1 && (
         <div className="flex items-center gap-1 px-2 h-10 shrink-0 overflow-x-auto" style={{ borderTop: '1px solid var(--line)' }}>
@@ -78,7 +91,7 @@ export const SlidesPreview: React.FC<{ slides: SlideData[] }> = ({ slides }) => 
       {slides.length === 0 && <div className="py-20 text-center text-fg-3">This presentation has no slides.</div>}
       {slides.map((s, i) => (
         <div key={s.number} className="flex gap-3 fade-up" style={{ ['--d' as string]: `${Math.min(i, 8) * 50}ms` }}>
-          <span className="w-6 pt-1 text-right font-mono text-[11px] text-fg-3 shrink-0">{s.number}</span>
+          <span className="w-6 pt-1 text-right num text-[11.5px] text-fg-3 shrink-0">{s.number}</span>
           <div
             className="relative flex-1 aspect-[16/9] rounded-xl overflow-hidden px-8 py-6 flex flex-col"
             style={{ background: 'linear-gradient(160deg, #1c1c24, #15151b)', boxShadow: 'inset 0 0 0 1px var(--line-strong), 0 14px 30px -18px rgba(0,0,0,0.8)' }}

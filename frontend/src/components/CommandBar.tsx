@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Folder, FolderTree, Search, X } from 'lucide-react';
-import { SearchMode } from '../api';
-import { SegmentedControl } from './motion/SegmentedControl';
+import { ChevronDown, ClipboardList, Folder, FolderTree, Search, X } from 'lucide-react';
 import { folderLabel } from '../utils/paths';
+import { isListPaste, parseClipboardGrid } from '../utils/query';
+import { SyntaxHelp } from './QueryHints';
 
 // Command-palette search field (matrix ref R41 Command Menu). A folder scope shows as a
 // breadcrumb chip with a stacked layer behind the bar; Backspace on an empty field
@@ -11,35 +11,28 @@ import { folderLabel } from '../utils/paths';
 interface CommandBarProps {
   query: string;
   onQueryChange: (q: string) => void;
-  mode: SearchMode;
-  onModeChange: (m: SearchMode) => void;
   scope: string | null;
   onScopeChange: (folder: string | null) => void;
   folders: string[];
   busy: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
-  onArrow: (dir: 1 | -1) => void;
-  onSubmit: (e: React.KeyboardEvent) => void;
+  onPasteList: (grid: string[][]) => void;
+  onOpenList: () => void;
+  listKey?: string;
 }
 
-const MODES = [
-  { id: 'all' as const, label: 'All', hint: 'Names and file text' },
-  { id: 'filename' as const, label: 'Names', hint: 'File and folder names only' },
-  { id: 'content' as const, label: 'Text', hint: 'Text inside files only' },
-];
 
 export const CommandBar: React.FC<CommandBarProps> = ({
   query,
   onQueryChange,
-  mode,
-  onModeChange,
   scope,
   onScopeChange,
   folders,
   busy,
   inputRef,
-  onArrow,
-  onSubmit,
+  onPasteList,
+  onOpenList,
+  listKey,
 }) => {
   const [scopeOpen, setScopeOpen] = useState(false);
   const scopeRef = useRef<HTMLDivElement>(null);
@@ -71,7 +64,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
       </div>
 
       <div
-        className="command-bar relative flex items-center gap-2 h-[52px] pl-4 pr-2 rounded-2xl"
+        className="command-bar relative flex items-center gap-1.5 h-[52px] pl-4 pr-2 rounded-2xl"
       >
         <span className="relative w-[18px] h-[18px] shrink-0 text-fg-3">
           <Search
@@ -107,19 +100,21 @@ export const CommandBar: React.FC<CommandBarProps> = ({
           value={query}
           onChange={e => onQueryChange(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-              // Focus moves to the list here, so the window key handler must not see this press too
-              e.preventDefault();
-              e.stopPropagation();
-              onArrow(e.key === 'ArrowDown' ? 1 : -1);
-            } else if (e.key === 'Backspace' && !query && scope) {
+            // Arrows, Enter and the other keys are handled by the window (they can be changed)
+            if (e.key === 'Backspace' && !query && scope) {
               e.preventDefault();
               onScopeChange(null);
-            } else if (e.key === 'Enter') {
-              onSubmit(e);
             }
           }}
-          placeholder={scope ? `Search in ${folderLabel(scope)}…` : 'Search file names and text…'}
+          onPaste={e => {
+            // Cells copied from Excel (several lines or columns) open the list table
+            const text = e.clipboardData.getData('text/plain');
+            if (isListPaste(text)) {
+              e.preventDefault();
+              onPasteList(parseClipboardGrid(text));
+            }
+          }}
+          placeholder={scope ? `Search file names in ${folderLabel(scope)}…   :text` : 'Search file names   ·   :text inside files   ·   .xlsx:total   invoice+.pdf'}
           className="flex-1 min-w-0 h-full bg-transparent text-[16px] text-fg placeholder:text-fg-3 outline-none select-text"
           autoFocus
           spellCheck={false}
@@ -187,7 +182,17 @@ export const CommandBar: React.FC<CommandBarProps> = ({
           </div>
         )}
 
-        <SegmentedControl options={MODES} value={mode} onChange={onModeChange} size="sm" className="shrink-0" />
+        <button type="button" className="icon-btn shrink-0" onClick={onOpenList} title={`Search a list of values${listKey ? ` (${listKey})` : ''}. You can also paste cells from Excel.`}>
+          <ClipboardList className="w-4 h-4" />
+        </button>
+        <SyntaxHelp
+          listKey={listKey}
+          onInsert={text => {
+            onQueryChange(text);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        />
+
       </div>
     </div>
   );

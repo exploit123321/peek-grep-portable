@@ -14,13 +14,38 @@ class SearchResultItem(BaseModel):
     match_type: str = "content"  # "filename", "content", "both"
     category: str = "plain"      # "code", "markdown", "data", "media", "plain"
 
+class HighlightTerm(BaseModel):
+    text: str
+    literal: bool = False
+    exact: bool = False           # the whole file name
+    pieces: List[List[str]] = []  # ["text", "abc"], ["any", ""] for *, ["one", ""] for ?
+    field: str = "name"           # name or text
+
+class ExplainChip(BaseModel):
+    kind: str   # ext, not-ext, name, not-name, exact, not-exact, text, not-text, groups
+    text: str
+    literal: bool = False
+
+class SearchGroup(BaseModel):
+    label: str
+    total: int
+    offset: int = 0
+    has_more: bool = False
+    results: List[SearchResultItem]
+    highlight: List[HighlightTerm] = []
+
 class SearchResponse(BaseModel):
     query: str
-    mode: str
     type_filter: str
     total: int
     took_ms: float
     results: List[SearchResultItem]
+    offset: int = 0
+    has_more: bool = False
+    grouped: bool = False
+    groups: List[SearchGroup] = []
+    highlight: List[HighlightTerm] = []
+    explain: List[ExplainChip] = []
 
 class TablePreviewData(BaseModel):
     columns: List[str]

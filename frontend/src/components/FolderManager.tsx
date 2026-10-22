@@ -152,7 +152,7 @@ export const FolderManager: React.FC<FolderManagerProps> = ({
                   ) : (
                     <span className="flex items-center gap-1 text-fg-3">
                       <Check className="w-3.5 h-3.5 text-ok" />
-                      <RollingNumber value={st.files} className="font-mono text-fg-2" /> files
+                      <RollingNumber value={st.files} className="text-fg-2" /> files
                     </span>
                   )}
                 </div>

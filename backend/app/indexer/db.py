@@ -6,9 +6,20 @@ import re
 import sqlite3
 import threading
 import time
+from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from app.config import DB_PATH
 from app.schemas import SearchResultItem
+
+@lru_cache(maxsize=512)
+def compiled_regex(pattern: str) -> "re.Pattern[str]":
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def _sql_regexp(pattern: str, value: Optional[str]) -> int:
+    """pg_regexp(pattern, value) in SQL: case-insensitive search (names with non-ASCII letters, text checks)."""
+    return 1 if value is not None and compiled_regex(pattern).search(value) else 0
+
 
 # Thread-local storage for SQLite connections
 _local = threading.local()
@@ -39,6 +50,7 @@ def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA cache_size = -64000;")  # 64MB cache
         conn.execute("PRAGMA temp_store = MEMORY;")
+        conn.create_function("pg_regexp", 2, _sql_regexp, deterministic=True)
         _local.connection = conn
         _local.current_path = target_path
 
@@ -441,148 +453,13 @@ def search_files(
     db_path: Optional[str] = None,
     folder: Optional[str] = None,
 ) -> List[SearchResultItem]:
-    """Search indexed files with ranking and snippet generation."""
-    conn = get_db_connection(db_path)
-    cur = conn.cursor()
-    clean_query = query.strip() if query else ""
+    """First page of a search (smart search syntax, see app/query.py). Groups are joined.
+    mode="content" searches the text (like ":query"); otherwise the query decides."""
+    from app.indexer.smart_search import run_search
 
-    category_clause, cat_params = _filter_clause(type_filter, folder)
-
-    # Empty query: return recently modified files
-    if not clean_query:
-        sql = f"""
-            SELECT path, filename, extension, size_bytes, mtime, is_text, category
-            FROM files_meta m
-            WHERE 1=1 {category_clause}
-            ORDER BY mtime DESC
-            LIMIT ?;
-        """
-        cur.execute(sql, (*cat_params, limit))
-        rows = cur.fetchall()
-        return [
-            SearchResultItem(
-                path=r["path"],
-                filename=r["filename"],
-                extension=r["extension"],
-                size_bytes=r["size_bytes"],
-                mtime=r["mtime"],
-                is_text=bool(r["is_text"]),
-                snippet=None,
-                match_type="all",
-                category=r["category"],
-            )
-            for r in rows
-        ]
-
-    results_map: Dict[str, Dict[str, Any]] = {}
-
-    # Filename search
-    if mode in ("filename", "all"):
-        filename_pattern = f"%{escape_like(clean_query)}%"
-        filename_sql = f"""
-            SELECT path, filename, extension, size_bytes, mtime, is_text, category
-            FROM files_meta m
-            WHERE (filename LIKE ? ESCAPE '^' OR path LIKE ? ESCAPE '^') {category_clause}
-            LIMIT ?;
-        """
-        cur.execute(filename_sql, (filename_pattern, filename_pattern, *cat_params, limit * 2))
-        fn_rows = cur.fetchall()
-
-        lower_query = clean_query.lower()
-        for r in fn_rows:
-            p = r["path"]
-            fname = r["filename"].lower()
-
-            if fname == lower_query:
-                score = 100.0
-            elif fname.startswith(lower_query):
-                score = 80.0
-            elif lower_query in fname:
-                score = 60.0
-            else:
-                score = 40.0
-
-            results_map[p] = {
-                "path": r["path"],
-                "filename": r["filename"],
-                "extension": r["extension"],
-                "size_bytes": r["size_bytes"],
-                "mtime": r["mtime"],
-                "is_text": bool(r["is_text"]),
-                "snippet": None,
-                "match_type": "filename",
-                "category": r["category"],
-                "score": score,
-            }
-
-    # Content search (FTS5)
-    if mode in ("content", "all"):
-        fts_query = escape_fts5_query(clean_query, prefix=True)
-        if fts_query:
-            try:
-                fts_sql = f"""
-                    SELECT
-                        f.path,
-                        m.filename,
-                        m.extension,
-                        m.size_bytes,
-                        m.mtime,
-                        m.is_text,
-                        m.category,
-                        snippet(files_content_fts, 1, char(2), char(3), '…', 20) AS snippet_text,
-                        bm25(files_content_fts) AS rank_score
-                    FROM files_content_fts f
-                    JOIN files_meta m ON f.path = m.path
-                    WHERE files_content_fts MATCH ? {category_clause}
-                    ORDER BY rank_score ASC
-                    LIMIT ?;
-                """
-                cur.execute(fts_sql, (fts_query, *cat_params, limit * 2))
-                content_rows = cur.fetchall()
-
-                for r in content_rows:
-                    p = r["path"]
-                    bm25_score = float(r["rank_score"])
-                    content_score = max(10.0, 50.0 - (bm25_score * 5.0))
-                    snippet_html = format_snippet(r["snippet_text"])
-
-                    if p in results_map:
-                        results_map[p]["match_type"] = "both"
-                        results_map[p]["snippet"] = snippet_html
-                        results_map[p]["score"] += content_score + 25.0
-                    else:
-                        results_map[p] = {
-                            "path": r["path"],
-                            "filename": r["filename"],
-                            "extension": r["extension"],
-                            "size_bytes": r["size_bytes"],
-                            "mtime": r["mtime"],
-                            "is_text": bool(r["is_text"]),
-                            "snippet": snippet_html,
-                            "match_type": "content",
-                            "category": r["category"],
-                            "score": content_score,
-                        }
-            except sqlite3.OperationalError:
-                pass
-
-    sorted_items = sorted(
-        results_map.values(),
-        key=lambda x: (x["score"], x["mtime"]),
-        reverse=True
-    )
-
-    return [
-        SearchResultItem(
-            path=item["path"],
-            filename=item["filename"],
-            extension=item["extension"],
-            size_bytes=item["size_bytes"],
-            mtime=item["mtime"],
-            is_text=item["is_text"],
-            snippet=item["snippet"],
-            match_type=item["match_type"],
-            category=item["category"],
-        )
-        for item in sorted_items[:limit]
-    ]
+    if mode == "content" and ":" not in query:
+        query = ":" + query
+    res = run_search(query, type_filter=type_filter, folder=folder, limit=limit, group_limit=limit, db_path=db_path)
+    if res["grouped"]:
+        return [item for g in res["groups"] for item in g["results"]]
+    return res["results"]

@@ -99,7 +99,7 @@ def test_punctuation_query_does_not_throw(test_db):
         assert isinstance(results, list)
 
 def test_filename_ranking_priority(test_db):
-    """Verify exact filename match ranks above substring/content match."""
+    """Names without ":", text after ":"; a name that starts with the word ranks first."""
     # File 1 has exact filename match 'analysis.csv'
     upsert_file(
         path=r"C:\test\analysis.csv",
@@ -126,11 +126,16 @@ def test_filename_ranking_priority(test_db):
         db_path=test_db,
     )
 
+    # Without ":" only file names are searched; after ":" the text
     results = search_files("analysis", mode="all", db_path=test_db)
-    assert len(results) == 2
-    # analysis.csv should rank first due to filename exact match
-    assert results[0].filename == "analysis.csv"
-    assert results[1].filename == "other.txt"
+    assert [r.filename for r in results] == ["analysis.csv"]
+    results = search_files(":analysis", mode="all", db_path=test_db)
+    assert [r.filename for r in results] == ["other.txt"]
+    # A name that starts with the word ranks above one that only contains it
+    upsert_file(path=r"C:\test\old analysis.txt", filename="old analysis.txt", extension=".txt",
+                size_bytes=10, mtime=1725553000.0, is_text=True, category="plain", content="x", db_path=test_db)
+    results = search_files("analysis", mode="all", db_path=test_db)
+    assert [r.filename for r in results] == ["analysis.csv", "old analysis.txt"]
 
 def test_delete_file_removes_from_meta_and_fts(test_db):
     """Verify deleting a file removes it from both tables."""

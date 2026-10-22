@@ -11,6 +11,47 @@ the working folders that the user selects on the first start.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
 - **New UI** (React, Tailwind, no new packages). See the motion references below.
 
+## Smart search
+
+Without `:` the search looks at **file names only**. After `:` it looks at the **text inside
+the files**. Everything is case-insensitive. The chips under the search field show how a search
+was read, and the **?** button in the search field lists these examples.
+
+| Type | Finds |
+|---|---|
+| `invoice` | File names that contain "invoice": invoice1.xlsx, invoice2.xlsx, old invoice.docx |
+| `invoice.xlsx` | Exactly the file name invoice.xlsx (a name with an extension is the whole name) |
+| `.xlsx` | All `.xlsx` files |
+| `invoice+.xlsx` | Names with "invoice", only `.xlsx` files |
+| `invoice-.xlsx` | Names with "invoice", but no `.xlsx` files |
+| `invoice-old` | Names with "invoice" but without "old" |
+| `:invoice` | "invoice" in the text of any file |
+| `.xlsx:total` | "total" in the text of `.xlsx` files |
+| `invoice+.xlsx:total` | "total" in the text of `.xlsx` files with "invoice" in the name |
+| `invoice-old+.xlsx+.pdf:total` | "total" in `.xlsx` and `.pdf` files whose names have "invoice" and not "old" (invoiceold.pdf is left out) |
+| `:total+memo`, `:total-draft` | Texts with both words; texts with "total" but not "draft" |
+| `-notes:total` | "total" in the text of files without "notes" in the name |
+| `[invoice, receipt]` | One expandable row per element, each with all its hits. Spaces after the comma do not matter |
+| `.xlsx:[total, tax]` | Text around the brackets applies to every element (`[invoice, receipt]+.pdf` too) |
+| `tot*l`, `rec?ipt` | Wildcards: `*` any characters, `?` one character (in text: inside a word) |
+| `/e-mail`, `"e-mail"` | `/` (the rest) or quotes: literal text. Works everywhere: `invoice:/total+tax` |
+
+`+` (and outside brackets `,`) joins parts that must all hit; `-` starts a part that must not hit.
+A `-` between two digits (`2024-05`) is just a character; for other names with a dash use `/` or
+quotes. Several extensions mean any of them. Inside brackets a `/` literal ends at the next comma
+or `]`. `C:\...` is a path, not a `:` search. All results can be scrolled: the next hits load
+while you scroll.
+
+**Search a list:** paste cells from Excel (several rows or columns) into the search field, or
+press Ctrl+L. A table opens: edit, remove, or add values, choose **File names** or **Text**, and
+**Expandable** (one row per value, `[a, b]`) or **Together** (every value must hit, `a+b`).
+"Only files" limits the files first, for example `.xlsx` or `invoice-old+.pdf`. The values stay on
+screen under the search field, with their hit counts.
+
+**Find in Quick Look:** Ctrl+F, or just start typing. Wildcards and `a+b` work there too.
+Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. PDFs use the
+viewer's own search (plain text).
+
 ## Editing (Quick Look > Edit)
 
 | Format | What you can edit |
@@ -28,10 +69,14 @@ Every save copies the old version to `data\backups` (last 200), refuses a file t
 | Key | Default | Meaning |
 |---|---|---|
 | `hotkey` | `"alt+space"` | Global key that shows or hides the window |
+| `shortcuts` | (none) | In-app keys that you changed, for example `{"move_down": ["ArrowDown", "J"]}`. Missing actions use the defaults |
+| `open_on_mouse_monitor` | `true` | Open the window on the screen with the mouse pointer. A remembered position on a screen that is off or unplugged is never used |
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
 | `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
 
-Quit the app before you edit this file.
+Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of the app can be
+changed there, also the global show/hide key, and the app saves them in this file at once.
+Quit the app before you edit this file by hand.
 
 ## Build (nothing to install)
 
@@ -57,7 +102,7 @@ Output in `release\`:
 - `PeekGrep.exe` is one self-extracting file (about 39 MB). On the first start it unpacks `PeekGrep\` next to itself. Later starts launch at once. A newer exe replaces `runtime\` and `app\` and keeps `data\`.
 - `PeekGrep\` is the unpacked portable folder (about 104 MB), with a plain launcher.
 
-Tests (41): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
+Tests (73): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 
 ## Motion references (from the motion reference matrix)
 
@@ -66,6 +111,7 @@ Tests (41): in `backend\`, run `venv\Scripts\python.exe -m pytest -q`.
 | Search field, result list | Command palette, one highlight glides between rows | R41 Command Menu (M1, Q1) |
 | Folder scope chip | Breadcrumb chip with a stacked layer behind the bar, Backspace leaves the scope | R23 вЊK Breadcrumbs (Q2) |
 | Mode and type switches | Sliding pill, labels invert under the pill | R05 Exclusion Tabs (Q2) |
+| Groups of `[a, b]` | Rows open like drop-downs, the files rise in | X04 result rows (E1, M1) |
 | Mode and type switches | Soft light follows the pointer | R38 Flashlight Tabs (Q2) |
 | Selected row | Accent prefix, rows away from the selection fade | E14 Slot scroll list (F2) |
 | New result rows | Rise and sharpen in sequence | X04 result rows (E1, M1), R03 Blur Reveal (L2) |
