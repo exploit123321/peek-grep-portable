@@ -358,11 +358,19 @@ function Workspace() {
         inputRef.current?.select();
       }
     };
+    // The window got the keyboard (shown, or a new window after the tray): the search field
+    // takes it unless something on the page has it already
+    const onFocus = () => {
+      const active = document.activeElement;
+      if (view === 'search' && (!active || active === document.body)) inputRef.current?.focus();
+    };
     window.addEventListener('peekgrep:open-folders', onFolders);
     window.addEventListener('peekgrep:shown', onShown);
+    window.addEventListener('focus', onFocus);
     return () => {
       window.removeEventListener('peekgrep:open-folders', onFolders);
       window.removeEventListener('peekgrep:shown', onShown);
+      window.removeEventListener('focus', onFocus);
     };
   }, [view]);
 

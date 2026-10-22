@@ -228,17 +228,113 @@ def get_window_size() -> dict:
     return {"width": DEFAULT_SIZE[0], "height": DEFAULT_SIZE[1], "is_maximized": False}
 
 
-def focus_window_native():
-    """Bring the window to the foreground (Windows can refuse this for background apps)."""
+VK_MENU = 0x12  # Alt
+VK_MASK = 0xE8  # an unassigned key (AutoHotkey's "menu mask key")
+KEYEVENTF_KEYUP = 0x2
+_focus_api = None
+
+
+def _user32():
+    """user32 with typed window handles (a copy, so pywebview's own calls are not affected)."""
+    global _focus_api
+    if _focus_api is None:
+        from ctypes import wintypes
+
+        api = ctypes.WinDLL("user32")
+        hwnd = wintypes.HWND
+        for name, args, res in (
+            ("GetForegroundWindow", [], hwnd),
+            ("GetWindowThreadProcessId", [hwnd, ctypes.c_void_p], wintypes.DWORD),
+            ("AttachThreadInput", [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL], wintypes.BOOL),
+            ("IsIconic", [hwnd], wintypes.BOOL),
+            ("ShowWindow", [hwnd, ctypes.c_int], wintypes.BOOL),
+            ("BringWindowToTop", [hwnd], wintypes.BOOL),
+            ("SetForegroundWindow", [hwnd], wintypes.BOOL),
+            ("GetAsyncKeyState", [ctypes.c_int], ctypes.c_short),
+            ("keybd_event", [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_void_p], None),
+            ("FindWindowW", [wintypes.LPCWSTR, wintypes.LPCWSTR], hwnd),
+        ):
+            fn = getattr(api, name)
+            fn.argtypes, fn.restype = args, res
+        _focus_api = api
+    return _focus_api
+
+
+def _tap(vk: int) -> None:
+    user32 = _user32()
+    user32.keybd_event(vk, 0, 0, None)
+    user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, None)
+
+
+def mask_modifier_release() -> None:
+    """After a global key with Alt or Win, while that key is still down: an unassigned key
+    press, so letting go of Alt does not open the window menu (the typing would then go
+    nowhere) and letting go of Win does not open Start."""
     try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, APP_TITLE)
-        if hwnd:
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            user32.BringWindowToTop(hwnd)
-            user32.SetForegroundWindow(hwnd)
+        _tap(VK_MASK)
     except Exception:
         pass
+
+
+def _window_handle() -> int:
+    try:
+        return int(main_window.native.Handle.ToInt64())
+    except Exception:
+        try:
+            return _user32().FindWindowW(None, APP_TITLE) or 0
+        except Exception:
+            return 0
+
+
+def _focus_webview() -> None:
+    """Give the page the keyboard: focus the WebView2 control inside the window."""
+    try:
+        from System import Func, Type  # pythonnet, loaded by pywebview
+
+        form = main_window.native
+        form.Invoke(Func[Type](lambda: form.webview.Focus() and None))
+    except Exception:
+        pass
+
+
+def focus_window_native() -> bool:
+    """Make the window the active one, with the keyboard in the page.
+
+    Windows refuses a plain SetForegroundWindow from an app in the background (the window
+    then opens behind or without the keyboard). The call works while this thread is attached
+    to the input of the active window; a masked Alt press is the last resort.
+    """
+    try:
+        user32 = _user32()
+        kernel32 = ctypes.windll.kernel32
+        hwnd = _window_handle()
+        if not hwnd:
+            return False
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        foreground = user32.GetForegroundWindow()
+        if foreground != hwnd:
+            me = kernel32.GetCurrentThreadId()
+            other = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+            attached = bool(other) and other != me and bool(user32.AttachThreadInput(me, other, True))
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                if attached:
+                    user32.AttachThreadInput(me, other, False)
+        if user32.GetForegroundWindow() != hwnd:
+            held = user32.GetAsyncKeyState(VK_MENU) & 0x8000
+            if not held:
+                user32.keybd_event(VK_MENU, 0, 0, None)
+            user32.SetForegroundWindow(hwnd)
+            _tap(VK_MASK)
+            if not held:
+                user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, None)
+        _focus_webview()
+        return user32.GetForegroundWindow() == hwnd
+    except Exception:
+        return False
 
 
 # -- screens -----------------------------------------------------------------------
@@ -390,6 +486,12 @@ def toggle_window():
         hide_window()
     else:
         show_window()
+
+
+def on_hotkey(hotkey: str) -> None:
+    if any(mod in hotkey.split("+") for mod in ("alt", "windows")):
+        mask_modifier_release()
+    toggle_window()
 
 
 def open_folders_panel():
@@ -580,7 +682,7 @@ def register_hotkey(hotkey: str) -> None:
     """Use a new global show/hide key. The old key stays when Windows refuses the new one."""
     global _hotkey_handle
     # suppress=True keeps Windows from opening the active window's system menu
-    handle = keyboard.add_hotkey(hotkey, toggle_window, suppress=True)
+    handle = keyboard.add_hotkey(hotkey, on_hotkey, args=(hotkey,), suppress=True)
     if _hotkey_handle is not None:
         try:
             keyboard.remove_hotkey(_hotkey_handle)
@@ -616,6 +718,9 @@ def on_window_loaded():
             main_window.evaluate_js(pending_js.pop(0))
         except Exception:
             pass
+    # A new window (after the tray): the page is there now, so it gets the keyboard
+    if window_visible:
+        focus_window_native()
 
 
 def create_main_window(hidden: bool = False) -> None:
