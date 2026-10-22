@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardList, Plus, Search, Trash2, X } from 'lucide-react';
+import { ClipboardList, Plus, Scissors, Search, Trash2, X } from 'lucide-react';
 import { SegmentedControl } from './motion/SegmentedControl';
 import { AnimatedCheckbox } from './motion/AnimatedCheckbox';
-import { ListMode, listToQuery, ListWhere } from '../utils/query';
+import { isListPaste, ListMode, listToQuery, ListWhere, parseClipboardGrid } from '../utils/query';
 import { DEFAULT_SEARCH_OPTIONS, SearchOptions } from '../utils/searchOptions';
 
 // Search a list: values pasted from Excel (one per cell or per row) open here as a table.
 // Edit, remove, or add values, then search them in file names or in the text, as expandable
-// groups ([a, b]) or together (a+b).
+// groups ([a, b]) or together (a+b). Cells pasted into the table (or into a value) become
+// separate values; a value with spaces can be split into one value per word.
 
 interface ListEditorProps {
   grid: string[][];
@@ -30,10 +31,15 @@ interface Value {
 
 let nextId = 1;
 
-function valuesFrom(grid: string[][], split: Split): { values: Value[]; duplicates: number } {
-  const raw = split === 'rows'
+/** The texts of pasted cells: every cell, or every row (its cells joined with spaces). */
+function gridTexts(grid: string[][], split: Split): string[] {
+  return split === 'rows'
     ? grid.map(r => r.map(c => c.trim()).filter(Boolean).join(' '))
     : grid.flat().map(c => c.trim());
+}
+
+function valuesFrom(grid: string[][], split: Split): { values: Value[]; duplicates: number } {
+  const raw = gridTexts(grid, split);
   const seen = new Set<string>();
   const values: Value[] = [];
   let duplicates = 0;
@@ -97,6 +103,81 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
       if (after === undefined) return [...list, v];
       const i = list.findIndex(x => x.id === after);
       return [...list.slice(0, i + 1), v, ...list.slice(i + 1)];
+    });
+  };
+
+  /**
+   * Add values at a row: an empty row is replaced, else they come after it (no row: at the end).
+   * Values that are already in the list are left out.
+   */
+  const insertValues = (texts: string[], at?: number) => {
+    setState(s => {
+      const list = [...s.values];
+      const seen = new Set(list.map(v => v.text.trim().toLowerCase()).filter(Boolean));
+      const fresh: Value[] = [];
+      let skipped = 0;
+      for (const raw of texts) {
+        const text = raw.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        if (seen.has(text.toLowerCase())) {
+          skipped++;
+          continue;
+        }
+        seen.add(text.toLowerCase());
+        fresh.push({ id: nextId++, text, on: true });
+      }
+      if (!fresh.length) return { ...s, duplicates: s.duplicates + skipped };
+      let index = at === undefined ? -1 : list.findIndex(v => v.id === at);
+      if (index >= 0 && !list[index].text.trim()) list.splice(index, 1);
+      else if (index >= 0) index += 1;
+      else index = list.length;
+      list.splice(index, 0, ...fresh);
+      focusId.current = fresh[fresh.length - 1].id;
+      return { values: list, duplicates: s.duplicates + skipped };
+    });
+  };
+
+  // Ctrl+V anywhere in the table: cells from Excel become separate values (also in a value field)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      const rowId = active?.dataset.valueId ? Number(active.dataset.valueId) : undefined;
+      const inOtherField = !!active && rowId === undefined &&
+        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+      if (inOtherField) return; // "Only files" and other fields paste as usual
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text.trim()) return;
+      if (isListPaste(text)) {
+        e.preventDefault();
+        insertValues(gridTexts(parseClipboardGrid(text), split), rowId);
+      } else if (rowId === undefined) {
+        e.preventDefault();
+        insertValues([text]);
+      }
+    };
+    document.addEventListener('paste', onPaste, true);
+    return () => document.removeEventListener('paste', onPaste, true);
+  });
+
+  /** One value per word, in place: "a b c" becomes a, b, c (words already in the list are left out). */
+  const splitValue = (v: Value) => {
+    const words = v.text.split(/\s+/).filter(Boolean);
+    if (words.length < 2) return;
+    setState(s => {
+      const seen = new Set(s.values.filter(x => x.id !== v.id).map(x => x.text.trim().toLowerCase()));
+      const fresh: Value[] = [];
+      let skipped = 0;
+      for (const w of words) {
+        if (seen.has(w.toLowerCase())) {
+          skipped++;
+          continue;
+        }
+        seen.add(w.toLowerCase());
+        fresh.push({ id: nextId++, text: w, on: v.on });
+      }
+      const list = [...s.values];
+      list.splice(list.findIndex(x => x.id === v.id), 1, ...fresh);
+      return { values: list, duplicates: s.duplicates + skipped };
     });
   };
 
@@ -197,6 +278,7 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
                   if (el) inputs.current.set(v.id, el);
                   else inputs.current.delete(v.id);
                 }}
+                data-value-id={v.id}
                 value={v.text}
                 onChange={e => setValues(list => list.map(x => (x.id === v.id ? { ...x, text: e.target.value } : x)))}
                 onKeyDown={e => {
@@ -220,6 +302,16 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
                 spellCheck={false}
                 placeholder="Value"
               />
+              {/\S\s+\S/.test(v.text.trim()) && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 h-7 px-2 rounded-md text-[11.5px] text-fg-3 hover:text-fg hover:bg-surface-2 transition-colors"
+                  onClick={() => splitValue(v)}
+                  title="One value per word"
+                >
+                  <Scissors className="w-3.5 h-3.5" /> Split
+                </button>
+              )}
               <button
                 type="button"
                 className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100"
@@ -232,6 +324,7 @@ export const ListEditor: React.FC<ListEditorProps> = ({ grid, mode: initialMode,
           ))}
           <button type="button" className="flex items-center gap-2 h-9 px-2 ml-9 text-[12.5px] text-fg-3 hover:text-fg transition-colors" onClick={() => addValue()}>
             <Plus className="w-3.5 h-3.5" /> Add value
+            <span className="text-fg-3 opacity-70">· or paste cells from Excel (Ctrl+V)</span>
           </button>
         </div>
 

@@ -95,7 +95,8 @@ accessed dates up to date (it is a Windows setting).
 press Ctrl+L. A table opens: edit, remove, or add values, choose **File names** or **Text**, and
 **Expandable** (one row per value, `[a, b]`) or **Together** (every value must hit, `a+b`).
 "Only files" limits the files first, for example `.xlsx` or `invoice-old+.pdf`. The values stay on
-screen under the search field, with their hit counts.
+screen under the search field, with their hit counts. Cells pasted into the table (also into a value)
+become separate values, and **Split** turns a value with spaces into one value per word.
 
 **Find in Quick Look:** Ctrl+F, or just start typing. Wildcards and `a+b` work there too.
 Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. PDFs use the
