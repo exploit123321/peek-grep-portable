@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ClipboardList, FileCode2, FileText, Image as ImageIcon, Layers, Pencil, SearchX, Sheet, Sparkles, X } from 'lucide-react';
-import { api, AppOptions, AppSettings, BackupOptions, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
+import { api, AppOptions, AppSettings, BackupOptions, BigFileRule, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
 import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
 import { ResultsList, Row } from './components/ResultsList';
@@ -335,7 +335,9 @@ function Workspace() {
     if (!rows.length) return;
     setKeyboardFocus(true);
     let j = selected;
-    for (let k = selected + dir; k >= 0 && k < rows.length; k += dir) {
+    // Nothing chosen yet (a new search): the first row is only shown as chosen, so ↓ stops there first
+    const from = found < 0 && dir === 1 ? selected - 1 : selected;
+    for (let k = from + dir; k >= 0 && k < rows.length; k += dir) {
       const r = rows[k];
       if (r.kind === 'more' || (onlyFiles && r.kind !== 'item')) continue;
       j = k;
@@ -347,7 +349,7 @@ function Workspace() {
       const r = rows[k];
       if (r.kind === 'more') loadMore(r.group);
     }
-  }, [rows, selected, loadMore]);
+  }, [rows, selected, found, loadMore]);
 
   // Desktop window events (tray menu, hotkey)
   useEffect(() => {
@@ -604,6 +606,15 @@ function Workspace() {
       const s = await api.saveAppSettings(values);
       setSettings(s);
       if ('start_with_windows' in values) toast(s.app.start_with_windows ? 'Starts with Windows' : 'Does not start with Windows', 'info');
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+
+  const saveBigFiles = async (rules: BigFileRule[]): Promise<string | null> => {
+    try {
+      setSettings(await api.saveBigFiles(rules));
       return null;
     } catch (e) {
       return (e as Error).message;
@@ -900,6 +911,7 @@ function Workspace() {
           settings={settings}
           onChange={saveAppOptions}
           onBackupsChange={saveBackupOptions}
+          onBigFilesChange={saveBigFiles}
           onOpenSearchSettings={() => { setAppSettingsOpen(false); setSearchSettingsOpen(true); }}
           onOpenShortcuts={() => { setAppSettingsOpen(false); setShortcutsOpen(true); }}
           onClose={() => {

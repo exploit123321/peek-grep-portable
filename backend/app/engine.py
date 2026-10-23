@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from app.big_files import BIG_MAX_BYTES, matches
 from app.config import DATA_DIR, MAX_CONTENT_SIZE_BYTES, MAX_OFFICE_SIZE_BYTES, content_size_limit
 from app.indexer.crawler import IndexerProgressTracker, SafeDriveCrawler, build_file_record, crawler_tracker
 from app.indexer.db import (
@@ -81,7 +82,8 @@ class IndexManager:
                 self._started = True
                 self._crawl_thread = threading.Thread(target=self._crawl_loop, name="crawler", daemon=True)
                 self._crawl_thread.start()
-                self._fts_worker = FTSContentWorker(db_path=self.db_path, path_filter=self.settings.is_allowed)
+                self._fts_worker = FTSContentWorker(db_path=self.db_path, path_filter=self.settings.is_allowed,
+                                                   big_rules=lambda: self.settings.big_files)
                 self._fts_thread = threading.Thread(target=self._fts_worker.run, name="content", daemon=True)
                 self._fts_thread.start()
             self.watcher.restart(folders)
@@ -176,8 +178,9 @@ class IndexManager:
             return False
         upsert_files_batch([rec], db_path=self.db_path)
         ext = rec["extension"]
-        if ext in PASS2_EXTENSIONS and rec["size_bytes"] <= content_size_limit(ext):
-            text = FTSContentWorker(db_path=self.db_path).extract_text_from_file(rec["path"], ext)
+        big = matches(self.settings.big_files, rec["path"], rec["filename"], ext)
+        if ext in PASS2_EXTENSIONS and rec["size_bytes"] <= (BIG_MAX_BYTES if big else content_size_limit(ext)):
+            text = FTSContentWorker(db_path=self.db_path).extract_text_from_file(rec["path"], ext, big)
             if text:
                 mark_files_fts_indexed([(rec["path"], text)], [], db_path=self.db_path)
             else:
@@ -201,7 +204,8 @@ class IndexManager:
                 "exists": os.path.isdir(folder),
             })
         pending = count_unindexed_content_files(PASS2_EXTENSIONS, MAX_CONTENT_SIZE_BYTES, db_path=self.db_path,
-                                                office_max_bytes=MAX_OFFICE_SIZE_BYTES)
+                                                office_max_bytes=MAX_OFFICE_SIZE_BYTES,
+                                                big_rules=self.settings.big_files)
         busy_scan = crawl["is_crawling"] or not self._queue.empty()
         phase = "setup" if not self.settings.setup_done or not folders else (
             "scanning" if busy_scan else ("reading" if pending else "ready"))

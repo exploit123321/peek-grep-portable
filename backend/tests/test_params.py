@@ -164,3 +164,17 @@ def test_old_index_gets_new_columns(tmp_path):
     con = sqlite3.connect(db_file)
     assert con.execute("SELECT ctime, atime FROM files_meta").fetchone() == (1700000000, 1700000000)
     con.close()
+
+
+def test_filters_before_the_text_search():
+    """".xlsx;size>150:product" is the same as ".xlsx:product;size>150"; "dm:2024" stays one filter."""
+    from app.query import explain, parse_query
+    chips = lambda q: [(c["kind"], c["text"]) for c in explain(parse_query(q))]
+    assert chips(".xlsx;size>150:product") == chips(".xlsx:product;size>150") == [
+        ("ext", ".xlsx"), ("text", "product"), ("param", "size > 150 B")]
+    assert chips(";size>1mb:total") == [("text", "total"), ("param", "size > 1 MB")]
+    assert chips("a:b;size>1kb:c") == [("name", "a"), ("text", "b"), ("text", "c"), ("param", "size > 1 KB")]
+    assert chips(".xlsx;dm 2024:product;size<5mb")[1:] == [
+        ("text", "product"), ("param", "modified 01.01.2024 – 31.12.2024"), ("param", "size < 5 MB")]
+    assert chips("x;dm:2024") == [("name", "x"), ("param", "modified 01.01.2024 – 31.12.2024")]
+    assert split_params("x;dm:2024", ";", True, "[", "]", ":", "+", lambda s: False) == ("x", ["dm:2024"])

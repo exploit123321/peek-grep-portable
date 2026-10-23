@@ -46,7 +46,9 @@ scrolled: the next hits load while you scroll.
 
 **What the text search reads:** the text of text, code and CSV files up to 10 MB; Office files
 (Word, Excel, PowerPoint) up to 100 MB and 32 million characters each (about 600,000 spreadsheet
-rows, all sheets); the first 50 pages of a PDF.
+rows, all sheets); the first 50 pages of a PDF. Files that match a rule in **Settings > Large
+files** (a file type like `.csv`, a part of the name like `big`, which also matches bigdata.xlsx,
+or one file by its full path) are read up to 200 MB and 100 million characters.
 
 ### Filters: dates and size (after `;`)
 
@@ -67,6 +69,7 @@ Each `;` starts a filter; filters apply to every group. `dm` is the date modifie
 | `;size from 1mb to 50mb`, `;size 1mb..50mb` | Size ranges, both ends included |
 | `;size=10mb` | About 10 MB (9.5 to 10.5 MB) |
 | `;size small` | Windows size names: empty, tiny, small, medium, large, huge, gigantic |
+| `.xlsx;size>150mb:product` | Filters can come before the text search: the same as `.xlsx:product;size>150mb` |
 
 Dates: `15-03-2024`, `15.03.2024`, `15/03/24`, `2024-03-15`, `20240315`, `15-03` (this year),
 `03-2024`, `2024-03`, `2024`, and month names in English or Latvian (`15 mar 2024`,
@@ -134,9 +137,10 @@ A save refuses a file that changed on disk since you opened it, and fails safely
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
 | `freeze_rows` | (none) | Rows that stay at the top of Excel and CSV views (preview and editor), under the column names, for example `"1"`, `"1-3"` or `"1, 4, 6-8"`. The rows do not have to be at the top: the frozen rows are shown in order at the top and the rest scroll below them. Row numbers are the ones at the left of the table (in a CSV file, row 1 is the first row after the header). At most 100; a short window shows as many as fit |
 | `backups` | `{"enabled": true, "per_file": 3, "gap_minutes": 60}` | Backups when the editor saves: on/off, how many are kept per file (1–50), and the minutes in which more saves make no new backup (0 = a backup at every save) |
+| `big_files` | (none) | Large files rules (Settings > Large files): `[{"kind": "type", "value": ".csv"}, {"kind": "name", "value": "big"}, {"kind": "file", "value": "D:\\Data\\export.csv"}]`. Matching files are read for the text search up to 200 MB and 100 million characters |
 | `skip_folders` | system and tool folders | Folder names that are never scanned, for example `["node_modules", ".git", "appdata"]`. Folders that start with `$` are always skipped. |
 
-Change these in the app: **… > Settings** (start with Windows, the window, frozen table rows, backups), **Search settings**, and
+Change these in the app: **… > Settings** (start with Windows, the window, frozen table rows, large files, backups), **Search settings**, and
 **Keyboard shortcuts**. Start with Windows is also in the tray menu.
 
 Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of the app can be

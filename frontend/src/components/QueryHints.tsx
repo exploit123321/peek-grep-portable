@@ -83,6 +83,7 @@ function syntaxRows(o: SearchOptions): [string, string][] {
     rows.push([`${P}da 7d`, 'accessed in the last 7 days (also 2w, 3m, 1y)']);
     rows.push([`${P}size>10mb`, 'bigger than 10 MB (b, kb, mb, gb, tb)']);
     rows.push([`${P}size from 1mb to 50mb`, 'sizes in a range (also: small, large, huge)']);
+    if (T && o.extensions) rows.push([`.xlsx${P}size>150mb${T}product`, 'filters can come before the text search too']);
   }
   return rows;
 }

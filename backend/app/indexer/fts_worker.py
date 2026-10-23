@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from app.big_files import BIG_TEXT_CHARS, matches
 from app.config import CONTENT_INDEX_EXTENSIONS, MAX_CONTENT_SIZE_BYTES, MAX_OFFICE_SIZE_BYTES
 from app.indexer.db import (
     count_fts_indexed,
@@ -64,6 +65,7 @@ class FTSContentWorker:
         batch_size: int = 50,
         db_path: Optional[str] = None,
         path_filter: Optional[Callable[[str], bool]] = None,
+        big_rules: Optional[Callable[[], List[Dict[str, str]]]] = None,
     ):
         self.extensions = extensions
         self.max_size_bytes = max_size_bytes
@@ -71,13 +73,16 @@ class FTSContentWorker:
         self.batch_size = batch_size
         self.db_path = db_path
         self.path_filter = path_filter
+        # Large files rules (Settings), read at every batch so changes apply at once
+        self.big_rules = big_rules or (lambda: [])
         self._stop_requested = threading.Event()
 
     def stop(self) -> None:
         self._stop_requested.set()
 
-    def extract_text_from_file(self, filepath: str, ext: str) -> Optional[str]:
-        """Extract plain text based on file format (PDF, EPUB, Markdown, text, code, CSV)."""
+    def extract_text_from_file(self, filepath: str, ext: str, big: bool = False) -> Optional[str]:
+        """Extract plain text based on file format (PDF, EPUB, Markdown, text, code, CSV).
+        big: the file matches a Large files rule (more Office text is kept)."""
         try:
             if not os.path.exists(filepath):
                 return None
@@ -90,7 +95,7 @@ class FTSContentWorker:
                 return epub_info.get("text")
 
             if ext in OFFICE_EXTENSIONS:
-                return extract_office_text(filepath, ext)
+                return extract_office_text(filepath, ext, BIG_TEXT_CHARS) if big else extract_office_text(filepath, ext)
 
             # Text / Code / CSV / Markdown
             try:
@@ -105,10 +110,12 @@ class FTSContentWorker:
     def process_batch(self, limit: Optional[int] = None) -> int:
         """Process a single batch of unindexed files. Returns number of processed items (indexed or skipped)."""
         batch_limit = limit or self.batch_size
+        rules = self.big_rules()
         unindexed_batch = get_unindexed_content_files(
             extensions=self.extensions,
             max_size_bytes=self.max_size_bytes,
             office_max_bytes=self.office_max_bytes,
+            big_rules=rules,
             limit=batch_limit,
             db_path=self.db_path,
         )
@@ -134,7 +141,7 @@ class FTSContentWorker:
             fts_worker_tracker.update_progress(0, path)
 
             try:
-                text = self.extract_text_from_file(path, ext)
+                text = self.extract_text_from_file(path, ext, matches(rules, path, item["filename"], ext))
                 if text:
                     indexed_items.append((path, text))
                 else:

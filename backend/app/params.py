@@ -19,7 +19,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 FIELDS = {
     "dm": "mtime", "modified": "mtime", "mod": "mtime", "date": "mtime", "changed": "mtime",
@@ -376,8 +376,43 @@ def parse_params(segments: List[str], date_order: str = "dmy", now: Optional[dat
     return params, errors
 
 
-def split_params(query: str, param_char: str, quotes: bool, group_open: str, group_close: str) -> Tuple[str, List[str]]:
-    """The search and its filters: the text before the first top-level param_char, and the parts after it."""
+def split_params(query: str, param_char: str, quotes: bool, group_open: str, group_close: str,
+                 text_char: str = "", and_char: str = "", is_param: Optional[Callable[[str], bool]] = None,
+                 ) -> Tuple[str, List[str]]:
+    """The search and its filters: the text before the first top-level param_char, and the parts after it.
+
+    With text_char and is_param, a filter may also come before the text search: in
+    ".xlsx;size>150:product" the text_char after a whole filter ("size>150") starts the text search
+    again, so this is the same as ".xlsx:product;size>150". ("dm:2024" stays one filter.)"""
+    text, segments = _split_params(query, param_char, quotes, group_open, group_close)
+    if not segments or not text_char or is_param is None:
+        return text, segments
+    kept: List[str] = []
+    for seg in segments:
+        cut = _text_after_param(seg, text_char, is_param)
+        if cut is None:
+            kept.append(seg)
+            continue
+        kept.append(seg[:cut])
+        rest = seg[cut:]
+        if text_char in text:
+            # The text already has a text search: the new words must hit too
+            rest = (and_char or " ") + rest[len(text_char):]
+        text += rest
+    return text, kept
+
+
+def _text_after_param(seg: str, text_char: str, is_param: Callable[[str], bool]) -> Optional[int]:
+    """Where the text search starts in a filter part ("size>150:product" -> 8), or None."""
+    pos = seg.find(text_char)
+    while pos > 0:
+        if is_param(seg[:pos]):
+            return pos
+        pos = seg.find(text_char, pos + 1)
+    return None
+
+
+def _split_params(query: str, param_char: str, quotes: bool, group_open: str, group_close: str) -> Tuple[str, List[str]]:
     if not param_char:
         return query, []
     depth = 0

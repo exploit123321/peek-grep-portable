@@ -231,6 +231,26 @@ class SettingsStore:
         """Close the WebView while the app is in the tray (saves about 190 MB; reopening takes about 1 s)."""
         return bool(self._data.get("release_window_on_hide", True))
 
+    @property
+    def big_files(self) -> List[Dict[str, str]]:
+        """Large files rules: types, name parts and files read with larger limits ("big_files")."""
+        from app.big_files import normalize_rules
+        try:
+            return normalize_rules(self._data.get("big_files", []))
+        except ValueError:
+            return []
+
+    def set_big_files(self, rules: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        from app.big_files import normalize_rules
+        cleaned = normalize_rules(rules)
+        with self._lock:
+            if cleaned:
+                self._data["big_files"] = cleaned
+            else:
+                self._data.pop("big_files", None)
+            self.save()
+        return cleaned
+
     def folders(self) -> List[str]:
         with self._lock:
             return [entry["path"] for entry in self._data["folders"]]

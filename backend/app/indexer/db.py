@@ -364,15 +364,43 @@ def rebase_drive(old_drive: str, new_drive: str, db_path: Optional[str] = None) 
 
     return _run_transaction(db_path, _rebase)
 
-def _size_clause(max_size_bytes: int, office_max_bytes: Optional[int]) -> Tuple[str, Tuple[Any, ...]]:
-    """SQL for the size limit: Office files (compressed) may have their own, larger limit."""
+def _size_clause(max_size_bytes: int, office_max_bytes: Optional[int],
+                 big_rules: Optional[List[Dict[str, str]]] = None) -> Tuple[str, Tuple[Any, ...]]:
+    """SQL for the size limit: Office files (compressed) may have their own, larger limit, and
+    files that match a Large files rule the largest."""
+    from app.big_files import BIG_MAX_BYTES, sql_condition
     from app.config import OFFICE_INDEX_EXTENSIONS
-    if office_max_bytes is None:
+    cases: List[str] = []
+    args: List[Any] = []
+    if big_rules:
+        cond, cond_args = sql_condition(big_rules)
+        cases.append(f"WHEN {cond} THEN ?")
+        args += [*cond_args, BIG_MAX_BYTES]
+    if office_max_bytes is not None:
+        office = tuple(sorted(OFFICE_INDEX_EXTENSIONS))
+        cases.append(f"WHEN extension IN ({','.join('?' for _ in office)}) THEN ?")
+        args += [*office, office_max_bytes]
+    if not cases:
         return "size_bytes <= ?", (max_size_bytes,)
-    office = tuple(sorted(OFFICE_INDEX_EXTENSIONS))
-    marks = ",".join("?" for _ in office)
-    return (f"size_bytes <= (CASE WHEN extension IN ({marks}) THEN ? ELSE ? END)",
-            (*office, office_max_bytes, max_size_bytes))
+    return f"size_bytes <= (CASE {' '.join(cases)} ELSE ? END)", (*args, max_size_bytes)
+
+
+def requeue_big_files(rules: List[Dict[str, str]], db_path: Optional[str] = None) -> int:
+    """Read files that match these Large files rules again (their text may have been cut)."""
+    from app.big_files import sql_condition
+    if not rules:
+        return 0
+    cond, args = sql_condition(rules)
+    count = [0]
+
+    def _requeue(cur: sqlite3.Cursor) -> None:
+        cur.execute(f"UPDATE files_meta SET fts_indexed = 0 WHERE fts_indexed != 0 AND size_bytes > 262144 AND {cond};", args)
+        count[0] = cur.rowcount
+    try:
+        _run_transaction(db_path, _requeue)
+    except sqlite3.OperationalError:
+        return 0  # No index yet
+    return count[0]
 
 
 def get_unindexed_content_files(
@@ -381,12 +409,13 @@ def get_unindexed_content_files(
     limit: int = 50,
     db_path: Optional[str] = None,
     office_max_bytes: Optional[int] = None,
+    big_rules: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Query batch of unindexed files eligible for Pass 2 background FTS extraction."""
     conn = get_db_connection(db_path)
     cur = conn.cursor()
     placeholders = ",".join("?" for _ in extensions)
-    size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes)
+    size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes, big_rules)
     sql = f"""
         SELECT path, filename, extension, size_bytes, mtime
         FROM files_meta
@@ -405,12 +434,13 @@ def count_unindexed_content_files(
     max_size_bytes: int = 10 * 1024 * 1024,
     db_path: Optional[str] = None,
     office_max_bytes: Optional[int] = None,
+    big_rules: Optional[List[Dict[str, str]]] = None,
 ) -> int:
     """Number of files still waiting for full-text extraction."""
     try:
         conn = get_db_connection(db_path)
         placeholders = ",".join("?" for _ in extensions)
-        size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes)
+        size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes, big_rules)
         row = conn.execute(f"""
             SELECT COUNT(*) FROM files_meta
             WHERE fts_indexed = 0 AND extension IN ({placeholders}) AND {size_sql};

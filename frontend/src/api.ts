@@ -57,6 +57,13 @@ export interface AppSettings {
   app: AppOptions;
   autostart_available: boolean;
   backups: BackupOptions;
+  big_files: BigFileRule[];
+}
+
+/** Large files: a file type (".csv"), a part of the name ("big"), or one file (full path). */
+export interface BigFileRule {
+  kind: 'type' | 'name' | 'file';
+  value: string;
 }
 
 /** Backups when the editor saves: one per editing session (gap_minutes), a few kept per file. */
@@ -219,6 +226,7 @@ export const api = {
   saveSearchSettings: (options: Partial<SearchOptions>) => post<AppSettings>('/api/settings/search', options, 'PUT'),
   saveAppSettings: (options: Partial<AppOptions>) => post<AppSettings>('/api/settings/app', options, 'PUT'),
   saveBackupSettings: (options: Partial<BackupOptions>) => post<AppSettings>('/api/settings/backups', options, 'PUT'),
+  saveBigFiles: (rules: BigFileRule[]) => post<AppSettings>('/api/settings/big_files', { rules }, 'PUT'),
   backups: () => request<BackupsInfo>('/api/edit/backups'),
   deleteBackups: () => post<BackupsInfo>('/api/edit/backups', undefined, 'DELETE'),
   openBackups: () => post<BackupsInfo>('/api/edit/backups/open'),
