@@ -14,7 +14,7 @@ import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/Offi
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
-import { HighlightTerm, parseFindText, plainSearchText } from '../utils/query';
+import { HighlightTerm, parseFindText } from '../utils/query';
 import { DEFAULT_SEARCH_OPTIONS, SearchOptions } from '../utils/searchOptions';
 import { ACTIONS, bindingParts, eventToBinding, Keymap, matches } from '../utils/keymap';
 import { HitReport, HitsContext, JumpContext } from './VirtualGrid';
@@ -244,9 +244,9 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const [hitIndex, setHitIndex] = useState(0);
   const hitIndexRef = useRef(0);
   hitIndexRef.current = hitIndex;
-  // Table views report their hits from the data (they draw only the visible rows)
+  // Table and PDF views report their hits from the data (they draw only the visible rows or pages)
   const [tableHits, setTableHits] = useState<HitReport | null>(null);
-  const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook';
+  const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook' || data?.preview_type === 'pdf';
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -375,7 +375,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'image':
         return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
       case 'pdf':
-        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} search={plainSearchText(activeTerms)} /> : null;
+        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} terms={activeTerms} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
       case 'document':
@@ -533,7 +533,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 {findText.trim()
                   ? (tableHits ? tableHits.count : hits.length) > 0
                     ? tableHits ? `${tableHits.index + 1}/${tableHits.count.toLocaleString()}` : `${hitIndex + 1}/${hits.length.toLocaleString()}`
-                    : current?.preview_type === 'pdf' ? 'in PDF' : 'no hits'
+                    : 'no hits'
                   : ''}
               </span>
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title={`Previous hit (Shift+Enter, ${keymap.prev_hit.join(', ')})`}>

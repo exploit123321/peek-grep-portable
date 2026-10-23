@@ -1,5 +1,6 @@
 """Main FastAPI application: API, static frontend, indexer status, and window controls."""
 
+import mimetypes
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Callable
@@ -14,9 +15,15 @@ from app.routers import actions, edit, folders, preview, search, settings
 from app.schemas import ActionResponse, ResizeWindowRequest, StatusResponse, WindowSizeResponse
 from app.state import desktop_hooks, index_manager, settings_store
 
-# Pages from the app's own origin only: no inline scripts, so injected HTML cannot run code
+# Windows takes file types from the registry, which may not know these: the PDF preview's worker
+# (.mjs) only loads as JavaScript, its decoders (.wasm) only as WebAssembly
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
+
+# Pages from the app's own origin only: no inline scripts, so injected HTML cannot run code.
+# WebAssembly only for the image decoders of the PDF preview (pdf.js)
 PAGE_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; font-src 'self' data:; frame-src 'self'; "
     "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
 )

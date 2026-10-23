@@ -9,7 +9,7 @@ the working folders that the user selects on the first start.
 - **Portable:** a bundled, isolated Python 3.14 runtime (`runtime\`, with a `._pth` file). All state is in `data\` next to the app. No registry entries (only the optional Start with Windows entry), no Startup shortcut. A free local port instead of 8000. One app per data folder: a second start shows the open window.
 - **Working folders first:** nothing is scanned, watched, previewed, or opened outside the allowed folders. The API returns 403 for other paths. Removing a folder deletes its index entries. A full rescan also removes deleted files. A changed file goes back to the text queue. Same-drive folders follow a new USB drive letter.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
-- **New UI** (React, Tailwind, no new packages). See the motion references below.
+- **New UI** (React, Tailwind; pdf.js for the PDF preview). See the motion references below.
 
 ## Smart search
 
@@ -107,8 +107,9 @@ screen under the search field, with their hit counts. Cells pasted into the tabl
 become separate values, and **Split** turns a value with spaces into one value per word.
 
 **Find in Quick Look:** Ctrl+F, or just start typing. Wildcards and `a+b` work there too.
-Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. PDFs use the
-viewer's own search (plain text).
+Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. PDFs too: they are
+drawn in the app (pdf.js, in `frontend\dist`, no internet), the preview opens at the first hit, and
+hits on every page are counted.
 
 ## Editing (Quick Look > Edit)
 

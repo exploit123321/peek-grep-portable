@@ -111,13 +111,6 @@ export function parseFindText(text: string, o: SearchOptions = DEFAULT_SEARCH_OP
     .map(part => makeTerm(part, false, 'text', o.wildcards));
 }
 
-/** Plain text of the first text term (for the PDF viewer, which has its own search). */
-export function plainSearchText(terms: HighlightTerm[]): string {
-  const term = textTerms(terms)[0];
-  if (!term) return '';
-  return term.pieces.filter(p => p[0] === 'text').map(p => p[1]).join(' ').trim();
-}
-
 // -- pasted lists --------------------------------------------------------------
 
 /** Rows and cells of copied spreadsheet text (tab between cells, quotes around cells with breaks). */
