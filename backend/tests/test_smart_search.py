@@ -262,3 +262,33 @@ def test_wildcard_then_literal(tmp_path):
     assert names(run_search(".xlsx:6403s", db_path=db_file)) == ["codes.xlsx", "plain.xlsx"]
     # After other characters the sign is just a character
     assert names(run_search(":01/03/2024", db_path=db_file)) == ["dates.txt"]
+
+
+def test_snippets_and_name_order(tmp_path):
+    from app.indexer.smart_search import _Search
+    clear_cache()
+    db_file = str(tmp_path / "snip.db")
+    init_db(db_file)
+    long_text = "filler words here " * 20000 + "the Café total is <ready> now"
+    files = (("deep.txt", long_text), ("report.txt", "x"), ("my report.txt", "x"), ("reports old.txt", "x"))
+    for i, (name, content) in enumerate(files):
+        upsert_file(path=os.path.join(str(tmp_path), name), filename=name, extension=".txt", size_bytes=len(content),
+                    mtime=1_700_000_000 + i, is_text=True, category="plain", content=content, db_path=db_file)
+    res = run_search(":cafe", db_path=db_file)
+    # The hit deep in a long text, accents folded, HTML escaped
+    assert res["results"][0].snippet.startswith("…") and "<mark>Café</mark> total is &lt;ready&gt;" in res["results"][0].snippet
+    # Name ranking by SQL: the same order as by Python (whole name, start, elsewhere)
+    by_sql = names_in_order(run_search("report", db_path=db_file))
+    original = _Search._name_ranking_sql
+    try:
+        _Search._name_ranking_sql = lambda self: None
+        clear_cache()
+        assert names_in_order(run_search("report", db_path=db_file)) == by_sql
+    finally:
+        _Search._name_ranking_sql = original
+    # Names that start with "report" first (newest first among them), then the others
+    assert by_sql == ["reports old.txt", "report.txt", "my report.txt"]
+
+
+def names_in_order(res):
+    return [r.filename for r in res["results"]]

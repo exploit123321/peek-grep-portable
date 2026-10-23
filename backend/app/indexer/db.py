@@ -90,33 +90,74 @@ def _run_transaction(db_path: Optional[str], statements: Callable[[sqlite3.Curso
     return execute_write_with_retry(_tx)
 
 def _delete_fts_paths(cur: sqlite3.Cursor, paths: List[str]) -> None:
-    """Remove the full-text rows of these paths in one pass.
-
-    The FTS5 path column is UNINDEXED, so each "WHERE path = ?" reads the whole text table.
-    One IN query reads it one time for the full batch.
-    """
+    """Remove the full-text rows of these paths (the text row of a file has the file's id)."""
     if paths:
-        cur.execute("DELETE FROM files_content_fts WHERE path IN (SELECT value FROM json_each(?));",
+        cur.execute("DELETE FROM files_content_fts WHERE rowid IN "
+                    "(SELECT id FROM files_meta WHERE path IN (SELECT value FROM json_each(?)));",
                     (json.dumps(paths),))
+
+
+# The text of a file is the full-text row whose rowid is the file's id: searches join on the id and
+# never read the stored texts (reading a path stored next to the text read the whole text).
+# OR REPLACE: a file's old text goes in the same step (no separate delete, which costs time
+# also for new files)
+_FTS_INSERT = "INSERT OR REPLACE INTO files_content_fts (rowid, content) SELECT id, ? FROM files_meta WHERE path = ?;"
+
+
+def _migrate_to_ids(cur: sqlite3.Cursor) -> None:
+    """Version 2: files_meta gets a stable integer id, and the full-text table is keyed by it
+    (one copy of the stored texts; nothing is read from the files again)."""
+    cols = {row[1] for row in cur.execute("PRAGMA table_info(files_meta);").fetchall()}
+    if "id" not in cols:
+        cur.execute("ALTER TABLE files_meta RENAME TO files_meta_v1;")
+        _create_meta(cur)
+        cur.execute("""
+            INSERT INTO files_meta (id, path, filename, extension, size_bytes, mtime, is_text, category,
+                                    fts_indexed, seen_at, ctime, atime)
+            SELECT rowid, path, filename, extension, size_bytes, mtime, is_text, category,
+                   fts_indexed, seen_at, ctime, atime FROM files_meta_v1;
+        """)
+        cur.execute("DROP TABLE files_meta_v1;")
+    fts_cols = {row[1] for row in cur.execute("PRAGMA table_info(files_content_fts);").fetchall()}
+    if "path" in fts_cols:
+        cur.execute("ALTER TABLE files_content_fts RENAME TO files_content_fts_v1;")
+        _create_fts(cur)
+        cur.execute("""
+            INSERT INTO files_content_fts (rowid, content)
+            SELECT m.id, o.content FROM files_content_fts_v1 o JOIN files_meta m ON m.path = o.path GROUP BY m.id;
+        """)
+        cur.execute("DROP TABLE files_content_fts_v1;")
+        # Files whose text row was missing are read again
+        cur.execute("UPDATE files_meta SET fts_indexed = 0 WHERE fts_indexed = 1 "
+                    "AND id NOT IN (SELECT rowid FROM files_content_fts);")
+
+
+def _create_meta(cur: sqlite3.Cursor) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS files_meta (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            filename TEXT NOT NULL,
+            extension TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            mtime REAL NOT NULL,
+            is_text INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            fts_indexed INTEGER NOT NULL DEFAULT 0,
+            seen_at REAL NOT NULL DEFAULT 0,
+            ctime REAL NOT NULL DEFAULT 0,
+            atime REAL NOT NULL DEFAULT 0
+        );
+    """)
+
+
+def _create_fts(cur: sqlite3.Cursor) -> None:
+    cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS files_content_fts USING fts5(content, tokenize = 'unicode61');")
 
 def init_db(db_path: Optional[str] = None) -> None:
     """Initialize SQLite database tables and FTS5 virtual table."""
     def _init(cur: sqlite3.Cursor) -> None:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS files_meta (
-                path TEXT PRIMARY KEY,
-                filename TEXT NOT NULL,
-                extension TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                mtime REAL NOT NULL,
-                is_text INTEGER NOT NULL,
-                category TEXT NOT NULL,
-                fts_indexed INTEGER NOT NULL DEFAULT 0,
-                seen_at REAL NOT NULL DEFAULT 0,
-                ctime REAL NOT NULL DEFAULT 0,
-                atime REAL NOT NULL DEFAULT 0
-            );
-        """)
+        _create_meta(cur)
         # Columns added after the first release
         existing = {row[1] for row in cur.execute("PRAGMA table_info(files_meta);").fetchall()}
         if "fts_indexed" not in existing:
@@ -138,19 +179,16 @@ def init_db(db_path: Optional[str] = None) -> None:
             cur.execute(f"UPDATE files_meta SET fts_indexed = 0 WHERE fts_indexed = 1 AND size_bytes > 262144 "
                         f"AND extension IN ({marks});", office)
             cur.execute("PRAGMA user_version = 1;")
+        if version < 2:
+            _migrate_to_ids(cur)
+            cur.execute("PRAGMA user_version = 2;")
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_filename ON files_meta(filename COLLATE NOCASE);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_category ON files_meta(category);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_mtime ON files_meta(mtime DESC);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_fts ON files_meta(fts_indexed, extension);")
 
-        cur.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS files_content_fts USING fts5(
-                path UNINDEXED,
-                content,
-                tokenize = 'unicode61'
-            );
-        """)
+        _create_fts(cur)
     _run_transaction(db_path, _init)
 
 def escape_fts5_query(query: str, prefix: bool = True) -> str:
@@ -279,9 +317,8 @@ def upsert_files_batch(
                 END;
         """, meta_tuples)
 
-        _delete_fts_paths(cur, fts_paths)
         if fts_inserts:
-            cur.executemany("INSERT INTO files_content_fts (path, content) VALUES (?, ?);", fts_inserts)
+            cur.executemany(_FTS_INSERT, [(content, path) for path, content in fts_inserts])
 
     _run_transaction(db_path, _upsert)
 
@@ -306,7 +343,8 @@ def delete_folder(folder: str, db_path: Optional[str] = None) -> int:
     pattern = folder_like_pattern(folder)
 
     def _delete(cur: sqlite3.Cursor) -> int:
-        cur.execute("DELETE FROM files_content_fts WHERE path LIKE ? ESCAPE '^';", (pattern,))
+        cur.execute("DELETE FROM files_content_fts WHERE rowid IN "
+                    "(SELECT id FROM files_meta WHERE path LIKE ? ESCAPE '^');", (pattern,))
         cur.execute("DELETE FROM files_meta WHERE path LIKE ? ESCAPE '^';", (pattern,))
         return cur.rowcount
 
@@ -318,8 +356,8 @@ def delete_unseen_in_folder(folder: str, seen_before: float, db_path: Optional[s
 
     def _sweep(cur: sqlite3.Cursor) -> int:
         cur.execute("""
-            DELETE FROM files_content_fts WHERE path IN (
-                SELECT path FROM files_meta WHERE path LIKE ? ESCAPE '^' AND seen_at < ?
+            DELETE FROM files_content_fts WHERE rowid IN (
+                SELECT id FROM files_meta WHERE path LIKE ? ESCAPE '^' AND seen_at < ?
             );
         """, (pattern, seen_before))
         cur.execute("DELETE FROM files_meta WHERE path LIKE ? ESCAPE '^' AND seen_at < ?;", (pattern, seen_before))
@@ -337,7 +375,8 @@ def delete_outside_folders(folders: List[str], db_path: Optional[str] = None) ->
             cur.execute("DELETE FROM files_meta;")
             return cur.rowcount
         keep = " OR ".join("path LIKE ? ESCAPE '^'" for _ in patterns)
-        cur.execute(f"DELETE FROM files_content_fts WHERE NOT ({keep});", patterns)
+        cur.execute(f"DELETE FROM files_content_fts WHERE rowid IN (SELECT id FROM files_meta WHERE NOT ({keep}));",
+                    patterns)
         cur.execute(f"DELETE FROM files_meta WHERE NOT ({keep});", patterns)
         return cur.rowcount
 
@@ -353,14 +392,12 @@ def rebase_drive(old_drive: str, new_drive: str, db_path: Optional[str] = None) 
 
     def _rebase(cur: sqlite3.Cursor) -> int:
         # Drop rows that would collide with paths that already exist on the new letter
-        cur.execute("""
-            DELETE FROM files_meta WHERE path LIKE ? ESCAPE '^'
-              AND (? || substr(path, 3)) IN (SELECT path FROM files_meta);
-        """, (pattern, new))
+        collide = "path LIKE ? ESCAPE '^' AND (? || substr(path, 3)) IN (SELECT path FROM files_meta)"
+        cur.execute(f"DELETE FROM files_content_fts WHERE rowid IN (SELECT id FROM files_meta WHERE {collide});",
+                    (pattern, new))
+        cur.execute(f"DELETE FROM files_meta WHERE {collide};", (pattern, new))
         cur.execute("UPDATE files_meta SET path = ? || substr(path, 3) WHERE path LIKE ? ESCAPE '^';", (new, pattern))
-        changed = cur.rowcount
-        cur.execute("UPDATE files_content_fts SET path = ? || substr(path, 3) WHERE path LIKE ? ESCAPE '^';", (new, pattern))
-        return changed
+        return cur.rowcount
 
     return _run_transaction(db_path, _rebase)
 
@@ -461,8 +498,7 @@ def mark_files_fts_indexed(
     def _mark(cur: sqlite3.Cursor) -> None:
         if indexed_items:
             delete_tuples = [(p,) for p, _ in indexed_items]
-            _delete_fts_paths(cur, [p for p, _ in indexed_items])
-            cur.executemany("INSERT INTO files_content_fts (path, content) VALUES (?, ?);", indexed_items)
+            cur.executemany(_FTS_INSERT, [(content, path) for path, content in indexed_items])
             cur.executemany("UPDATE files_meta SET fts_indexed = 1 WHERE path = ?;", delete_tuples)
 
         if skipped_paths:
