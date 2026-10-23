@@ -104,18 +104,25 @@ TIER2_FTS_EXTENSIONS: Set[str] = {
     ".xml",
 }
 
+# Microsoft Office, new and old formats (text is read by indexer/office.py)
+OFFICE_INDEX_EXTENSIONS: Set[str] = {".docx", ".docm", ".doc", ".xlsx", ".xlsm", ".xls", ".pptx", ".pptm", ".ppt"}
+
 # All formats that get full-text indexing (the content worker reads these)
-CONTENT_INDEX_EXTENSIONS: Set[str] = TIER2_FTS_EXTENSIONS | {
-    ".pdf", ".epub",
-    # Microsoft Office, new and old formats (text is read by indexer/office.py)
-    ".docx", ".docm", ".doc", ".xlsx", ".xlsm", ".xls", ".pptx", ".pptm", ".ppt",
-}
+CONTENT_INDEX_EXTENSIONS: Set[str] = TIER2_FTS_EXTENSIONS | {".pdf", ".epub"} | OFFICE_INDEX_EXTENSIONS
 
 # Strict file size boundary for direct full-text reads by the crawler and watcher (2MB)
 MAX_FTS_SIZE_BYTES: int = 2 * 1024 * 1024
 
 # Maximum file size for the content worker (PDF, EPUB, and large text files)
 MAX_CONTENT_SIZE_BYTES: int = 10 * 1024 * 1024
+
+# Office files are compressed: a 10 MB workbook can hold a few hundred thousand rows
+MAX_OFFICE_SIZE_BYTES: int = 100 * 1024 * 1024
+
+
+def content_size_limit(ext: str) -> int:
+    """Largest file whose text is indexed, for this extension."""
+    return MAX_OFFICE_SIZE_BYTES if ext.lower() in OFFICE_INDEX_EXTENSIONS else MAX_CONTENT_SIZE_BYTES
 
 # Maximum file size for Tier 1 metadata indexing (skip virtual/sparse files > 500GB)
 MAX_METADATA_SIZE_BYTES: int = 500 * 1024 * 1024 * 1024

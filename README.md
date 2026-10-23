@@ -44,6 +44,10 @@ quotes. Several extensions mean any of them. Inside brackets a `/` literal ends 
 or `]`, and everywhere at the next `;`. `C:\...` is a path, not a `:` search. All results can be
 scrolled: the next hits load while you scroll.
 
+**What the text search reads:** the text of text, code and CSV files up to 10 MB; Office files
+(Word, Excel, PowerPoint) up to 100 MB and 32 million characters each (about 600,000 spreadsheet
+rows, all sheets); the first 50 pages of a PDF.
+
 ### Filters: dates and size (after `;`)
 
 Each `;` starts a filter; filters apply to every group. `dm` is the date modified, `dc` created,

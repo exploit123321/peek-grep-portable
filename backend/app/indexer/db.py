@@ -128,6 +128,16 @@ def init_db(db_path: Optional[str] = None) -> None:
             if column not in existing:
                 cur.execute(f"ALTER TABLE files_meta ADD COLUMN {column} REAL NOT NULL DEFAULT 0;")
                 cur.execute(f"UPDATE files_meta SET {column} = mtime;")
+        # Version 1: Office text is no longer cut at 2 million characters; read larger Office
+        # files again (their text could have been cut, e.g. a workbook with 92,000 rows)
+        version = cur.execute("PRAGMA user_version;").fetchone()[0]
+        if version < 1:
+            from app.config import OFFICE_INDEX_EXTENSIONS
+            office = tuple(sorted(OFFICE_INDEX_EXTENSIONS))
+            marks = ",".join("?" for _ in office)
+            cur.execute(f"UPDATE files_meta SET fts_indexed = 0 WHERE fts_indexed = 1 AND size_bytes > 262144 "
+                        f"AND extension IN ({marks});", office)
+            cur.execute("PRAGMA user_version = 1;")
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_filename ON files_meta(filename COLLATE NOCASE);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_files_meta_category ON files_meta(category);")
@@ -354,26 +364,39 @@ def rebase_drive(old_drive: str, new_drive: str, db_path: Optional[str] = None) 
 
     return _run_transaction(db_path, _rebase)
 
+def _size_clause(max_size_bytes: int, office_max_bytes: Optional[int]) -> Tuple[str, Tuple[Any, ...]]:
+    """SQL for the size limit: Office files (compressed) may have their own, larger limit."""
+    from app.config import OFFICE_INDEX_EXTENSIONS
+    if office_max_bytes is None:
+        return "size_bytes <= ?", (max_size_bytes,)
+    office = tuple(sorted(OFFICE_INDEX_EXTENSIONS))
+    marks = ",".join("?" for _ in office)
+    return (f"size_bytes <= (CASE WHEN extension IN ({marks}) THEN ? ELSE ? END)",
+            (*office, office_max_bytes, max_size_bytes))
+
+
 def get_unindexed_content_files(
     extensions: Tuple[str, ...],
     max_size_bytes: int = 10 * 1024 * 1024,
     limit: int = 50,
     db_path: Optional[str] = None,
+    office_max_bytes: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Query batch of unindexed files eligible for Pass 2 background FTS extraction."""
     conn = get_db_connection(db_path)
     cur = conn.cursor()
     placeholders = ",".join("?" for _ in extensions)
+    size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes)
     sql = f"""
         SELECT path, filename, extension, size_bytes, mtime
         FROM files_meta
         WHERE fts_indexed = 0
           AND extension IN ({placeholders})
-          AND size_bytes <= ?
+          AND {size_sql}
         ORDER BY mtime DESC
         LIMIT ?;
     """
-    cur.execute(sql, (*extensions, max_size_bytes, limit))
+    cur.execute(sql, (*extensions, *size_args, limit))
     rows = cur.fetchall()
     return [dict(r) for r in rows]
 
@@ -381,15 +404,17 @@ def count_unindexed_content_files(
     extensions: Tuple[str, ...],
     max_size_bytes: int = 10 * 1024 * 1024,
     db_path: Optional[str] = None,
+    office_max_bytes: Optional[int] = None,
 ) -> int:
     """Number of files still waiting for full-text extraction."""
     try:
         conn = get_db_connection(db_path)
         placeholders = ",".join("?" for _ in extensions)
+        size_sql, size_args = _size_clause(max_size_bytes, office_max_bytes)
         row = conn.execute(f"""
             SELECT COUNT(*) FROM files_meta
-            WHERE fts_indexed = 0 AND extension IN ({placeholders}) AND size_bytes <= ?;
-        """, (*extensions, max_size_bytes)).fetchone()
+            WHERE fts_indexed = 0 AND extension IN ({placeholders}) AND {size_sql};
+        """, (*extensions, *size_args)).fetchone()
         return row[0] if row else 0
     except sqlite3.OperationalError:
         return 0

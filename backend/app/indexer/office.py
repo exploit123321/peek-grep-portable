@@ -31,7 +31,7 @@ MAX_SHEETS = 30
 MAX_ROWS = 300_000   # rows kept for the preview (the UI draws only the visible rows)
 MAX_COLS = 200
 MAX_CELLS = 3_000_000  # cells kept for the preview of one sheet
-MAX_TEXT_CHARS = 2_000_000
+MAX_TEXT_CHARS = 32_000_000  # search text per file (about 600,000 spreadsheet rows)
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"

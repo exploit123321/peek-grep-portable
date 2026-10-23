@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from app.config import DATA_DIR, MAX_CONTENT_SIZE_BYTES
+from app.config import DATA_DIR, MAX_CONTENT_SIZE_BYTES, MAX_OFFICE_SIZE_BYTES, content_size_limit
 from app.indexer.crawler import IndexerProgressTracker, SafeDriveCrawler, build_file_record, crawler_tracker
 from app.indexer.db import (
     count_files,
@@ -176,7 +176,7 @@ class IndexManager:
             return False
         upsert_files_batch([rec], db_path=self.db_path)
         ext = rec["extension"]
-        if ext in PASS2_EXTENSIONS and rec["size_bytes"] <= MAX_CONTENT_SIZE_BYTES:
+        if ext in PASS2_EXTENSIONS and rec["size_bytes"] <= content_size_limit(ext):
             text = FTSContentWorker(db_path=self.db_path).extract_text_from_file(rec["path"], ext)
             if text:
                 mark_files_fts_indexed([(rec["path"], text)], [], db_path=self.db_path)
@@ -200,7 +200,8 @@ class IndexManager:
                 "files": entry.get("files", 0),
                 "exists": os.path.isdir(folder),
             })
-        pending = count_unindexed_content_files(PASS2_EXTENSIONS, MAX_CONTENT_SIZE_BYTES, db_path=self.db_path)
+        pending = count_unindexed_content_files(PASS2_EXTENSIONS, MAX_CONTENT_SIZE_BYTES, db_path=self.db_path,
+                                                office_max_bytes=MAX_OFFICE_SIZE_BYTES)
         busy_scan = crawl["is_crawling"] or not self._queue.empty()
         phase = "setup" if not self.settings.setup_done or not folders else (
             "scanning" if busy_scan else ("reading" if pending else "ready"))

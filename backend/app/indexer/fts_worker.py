@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from app.config import CONTENT_INDEX_EXTENSIONS, MAX_CONTENT_SIZE_BYTES
+from app.config import CONTENT_INDEX_EXTENSIONS, MAX_CONTENT_SIZE_BYTES, MAX_OFFICE_SIZE_BYTES
 from app.indexer.db import (
     count_fts_indexed,
     get_unindexed_content_files,
@@ -60,12 +60,14 @@ class FTSContentWorker:
         self,
         extensions: Tuple[str, ...] = PASS2_EXTENSIONS,
         max_size_bytes: int = MAX_CONTENT_SIZE_BYTES,
+        office_max_bytes: int = MAX_OFFICE_SIZE_BYTES,
         batch_size: int = 50,
         db_path: Optional[str] = None,
         path_filter: Optional[Callable[[str], bool]] = None,
     ):
         self.extensions = extensions
         self.max_size_bytes = max_size_bytes
+        self.office_max_bytes = office_max_bytes
         self.batch_size = batch_size
         self.db_path = db_path
         self.path_filter = path_filter
@@ -106,6 +108,7 @@ class FTSContentWorker:
         unindexed_batch = get_unindexed_content_files(
             extensions=self.extensions,
             max_size_bytes=self.max_size_bytes,
+            office_max_bytes=self.office_max_bytes,
             limit=batch_limit,
             db_path=self.db_path,
         )
