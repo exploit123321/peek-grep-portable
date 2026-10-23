@@ -242,3 +242,23 @@ def test_saved_edit_is_searchable_at_once(tmp_path):
     assert get_file_meta(str(note), db_path=db_file)["fts_indexed"] == 2
     # A file the index does not hold stays out
     assert not manager.index_file_now(str(folder / "missing.txt"))
+
+
+def test_wildcard_then_literal(tmp_path):
+    """".xlsx:*/-6403s": any letters, then the literal "-6403s" (the dash is checked in the text)."""
+    clear_cache()
+    db_file = str(tmp_path / "codes.db")
+    init_db(db_file)
+    for i, (name, content) in enumerate((("codes.xlsx", "ABC-6403s ASJGAS-6403s"),
+                                         ("plain.xlsx", "plain 6403s here"),
+                                         ("dates.txt", "due 01/03/2024"))):
+        upsert_file(path=os.path.join(str(tmp_path), name), filename=name, extension=os.path.splitext(name)[1],
+                    size_bytes=10, mtime=1_700_000_000 + i, is_text=True, category="plain", content=content,
+                    db_path=db_file)
+    plan = parse_query(".xlsx:*/-6403s")
+    assert [t.pieces for t in plan.elements[0].content_terms] == [[("any", ""), ("text", "-6403s")]]
+    assert names(run_search(".xlsx:*/-6403s", db_path=db_file)) == ["codes.xlsx"]
+    assert names(run_search(".xlsx:as*/-6403s", db_path=db_file)) == ["codes.xlsx"]
+    assert names(run_search(".xlsx:6403s", db_path=db_file)) == ["codes.xlsx", "plain.xlsx"]
+    # After other characters the sign is just a character
+    assert names(run_search(":01/03/2024", db_path=db_file)) == ["dates.txt"]

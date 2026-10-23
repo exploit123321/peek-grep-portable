@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.indexer.smart_search import clear_cache
 from app.search_options import DEFAULTS, PRESET_LABELS, PRESETS, validate
-from app.settings import DEFAULT_HOTKEY, normalize_freeze_rows
+from app.settings import DEFAULT_HOTKEY, normalize_freeze_columns, normalize_freeze_rows
 from app.state import desktop_hooks, index_manager, settings_store
 
 router = APIRouter(prefix="/api", tags=["settings"])
@@ -121,11 +121,13 @@ async def save_app_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, str if k in text else bool)]
     if bad:
         raise HTTPException(status_code=400, detail=f"Unknown or not true/false: {', '.join(bad)}.")
-    if "freeze_rows" in payload:
-        try:
+    try:
+        if "freeze_rows" in payload:
             normalize_freeze_rows(payload["freeze_rows"])
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        if "freeze_columns" in payload:
+            normalize_freeze_columns(payload["freeze_columns"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     before = settings_store.app_settings()
     after = {**before, **payload}
     if (after["start_with_windows"], after["start_hidden"]) != (before["start_with_windows"], before["start_hidden"]):

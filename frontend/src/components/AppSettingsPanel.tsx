@@ -228,6 +228,12 @@ export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, on
             >
               <FreezeInput value={o.freeze_rows} onSave={v => change({ freeze_rows: v })} />
             </Row>
+            <Row
+              label="Freeze columns"
+              hint={<>These columns stay at the left, next to the row numbers. Letters or numbers: <span className="font-mono">A</span>, <span className="font-mono">A-B</span> or <span className="font-mono">1, 3</span>. A file can have its own in Quick Look.</>}
+            >
+              <FreezeInput value={o.freeze_columns} onSave={v => change({ freeze_columns: v })} />
+            </Row>
           </Section>
 
           <Section title="Large files" note="text search reads up to 200 MB">

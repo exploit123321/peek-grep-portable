@@ -58,3 +58,17 @@ def test_freeze_rows():
         assert client.put("/api/settings/app", json={"freeze_rows": ""}).json()["app"]["freeze_rows"] == ""
     finally:
         client.put("/api/settings/app", json={"freeze_rows": ""})
+
+
+def test_freeze_columns():
+    try:
+        res = client.put("/api/settings/app", json={"freeze_columns": " c  a-b 5, e "})
+        assert res.status_code == 200 and res.json()["app"]["freeze_columns"] == "A-C, E"
+        assert client.put("/api/settings/app", json={"freeze_columns": "27-28"}).json()["app"]["freeze_columns"] == "AA-AB"
+        assert client.put("/api/settings/app", json={"freeze_columns": "A1"}).status_code == 400
+        assert client.put("/api/settings/app", json={"freeze_columns": "XFE"}).status_code == 400
+        assert client.put("/api/settings/app", json={"freeze_columns": "A-ZZ"}).status_code == 400
+        assert settings_store.freeze_columns == "AA-AB"
+    finally:
+        client.put("/api/settings/app", json={"freeze_columns": ""})
+    assert settings_store.freeze_columns == ""

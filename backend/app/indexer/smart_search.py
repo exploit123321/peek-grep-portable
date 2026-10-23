@@ -160,7 +160,9 @@ def fts_expression(conn: sqlite3.Connection, db_path: Optional[str], term: Term,
             tokens = re.findall(r"\w+", marked)
             return _quote(" ".join(tokens)) + ("*" if prefix else ""), _phrase_regex(marked, prefix)
         return " AND ".join(parts), _phrase_regex(marked, prefix)
-    return " AND ".join(parts), None
+    # The index keeps only the words: signs between them ("*-6403s") are checked in the text
+    verify = _phrase_regex(marked, prefix) if re.search(r"[^\w\s\x01\x02]", marked) else None
+    return " AND ".join(parts), verify
 
 
 # -- one search --------------------------------------------------------------------

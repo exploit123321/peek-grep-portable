@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 import { HighlightTerm, pickRegexes, textTerms } from '../utils/query';
+import { Freeze, NO_FREEZE } from '../utils/freeze';
 
 // A table that holds all rows but draws only the visible ones, so large sheets scroll smoothly.
 // Search hits come from the data, so a hit in any row can be found and scrolled to.
@@ -20,20 +21,21 @@ export const HitsContext = createContext<(report: HitReport | null) => void>(() 
 /** False: new hits are marked, but the table does not scroll to the first one. */
 export const JumpContext = createContext(true);
 
-/** Row numbers (as shown at the left) that stay at the top under the column names (Settings > Tables). */
-export const FreezeContext = createContext<ReadonlySet<number>>(new Set());
+/** Rows that stay at the top and columns that stay at the left (Settings > Tables, or one file in Quick Look). */
+export const FreezeContext = createContext<Freeze>(NO_FREEZE);
 
-/** "1-3, 7" (the form the settings save) to the row numbers 1, 2, 3, 7. */
-export function parseFrozenRows(spec: string): ReadonlySet<number> {
-  const rows = new Set<number>();
-  for (const part of spec.split(/[,;\s]+/)) {
-    const m = /^(\d+)(?:-(\d+))?$/.exec(part);
-    if (!m) continue;
-    const a = Number(m[1]), b = Number(m[2] ?? m[1]);
-    for (let n = Math.min(a, b); n <= Math.max(a, b) && rows.size < 100; n++) rows.add(n);
-  }
-  return rows;
+/** Where a table is scrolled to: the top row (its row number, or its index without numbers) and
+ * the left edge. Quick Look keeps it, so preview and editor open where the other one was. */
+export interface GridAnchor {
+  row: number;
+  left: number;
+  /** The next table that opens goes here (once) */
+  restore: boolean;
 }
+export const AnchorContext = createContext<React.MutableRefObject<GridAnchor | null> | null>(null);
+
+/** A color over an opaque base: sticky cells must hide what scrolls below them. */
+const solid = (tint: string | undefined, base: string) => (tint ? `linear-gradient(${tint}, ${tint}), ${base}` : base);
 
 interface VirtualGridProps {
   columns: string[];
@@ -96,24 +98,28 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  const [height, setHeight] = useState(600);
+  const [box, setBox] = useState({ width: 800, height: 600 });
+  const height = box.height;
   const [active, setActive] = useState<{ r: number; c: number } | null>(null);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const report = useContext(HitsContext);
   const jump = useContext(JumpContext);
   const freeze = useContext(FreezeContext);
+  const anchor = useContext(AnchorContext);
+  const skipJump = useRef(false);
 
   // Frozen rows (indexes, in order) are drawn in the sticky header; the others scroll below them.
   // At most what leaves a few rows for scrolling; the rest stay in their place.
   const fit = Math.max(0, Math.floor(height / ROW_H) - 4);
   const frozen = useMemo(() => {
-    if (!freeze.size || !fit) return [] as number[];
+    const wanted = freeze.rows;
+    if (!wanted.size || !fit) return [] as number[];
     const found = rowNumber
-      ? rows.map((_, i) => i).filter(i => freeze.has(rowNumber(i)))
-      : [...freeze].map(n => n - 1).filter(i => i < rows.length).sort((a, b) => a - b);
+      ? rows.map((_, i) => i).filter(i => wanted.has(rowNumber(i)))
+      : [...wanted].map(n => n - 1).filter(i => i < rows.length).sort((a, b) => a - b);
     return found.slice(0, fit);
-  }, [freeze, fit, rows, rowNumber]);
+  }, [freeze.rows, fit, rows, rowNumber]);
   const frozenSet = useMemo(() => new Set(frozen), [frozen]);
   // Place in the scrolling part <-> row index (frozen is short and sorted)
   const bodyCount = rows.length - frozen.length;
@@ -152,19 +158,67 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
     [columns, rows, hits],
   );
 
+  // Row numbers: as wide as the largest one
+  const lastNumber = rows.length ? (rowNumber ? rowNumber(rows.length - 1) : rows.length) : 0;
+  const labelW = Math.max(48, Math.ceil(String(lastNumber).length * 7.6 + 22));
+
+  // Frozen columns come first and stay at the left; as many as leave room to scroll the others
+  const { order, frozenCols, lefts, frozenW } = useMemo(() => {
+    const wanted = [...freeze.cols].map(n => n - 1).filter(c => c < columns.length).sort((a, b) => a - b);
+    const kept: number[] = [];
+    const at = new Map<number, number>();
+    let w = 0;
+    for (const c of wanted) {
+      if (labelW + w + widths[c] > box.width - 160) break;
+      at.set(c, labelW + w);
+      kept.push(c);
+      w += widths[c];
+    }
+    return {
+      order: [...kept, ...columns.map((_, c) => c).filter(c => !at.has(c))],
+      frozenCols: kept,
+      lefts: at,
+      frozenW: w,
+    };
+  }, [freeze.cols, columns, widths, labelW, box.width]);
+  const lastFrozenCol = frozenCols[frozenCols.length - 1];
+
   const scrollToCell = (r: number, c: number) => {
     const el = scrollRef.current;
     if (!el) return;
     if (!frozenSet.has(r)) el.scrollTop = Math.max(0, placeOf(r) * ROW_H - (el.clientHeight - headH) / 2 + ROW_H);
-    const left = 48 + widths.slice(0, c).reduce((a, b) => a + b, 0);
-    if (left < el.scrollLeft || left + widths[c] > el.scrollLeft + el.clientWidth) {
-      el.scrollLeft = Math.max(0, left - el.clientWidth / 3);
+    if (lefts.has(c)) return;
+    // Columns scroll in the space right of the row numbers and the frozen columns
+    const fixed = labelW + frozenW;
+    const pos = order.indexOf(c);
+    const left = labelW + order.slice(0, pos).reduce((a, k) => a + widths[k], 0);
+    if (left < el.scrollLeft + fixed || left + widths[c] > el.scrollLeft + el.clientWidth) {
+      el.scrollLeft = Math.max(0, left - fixed - (el.clientWidth - fixed) / 3);
     }
   };
+
+  // Opened from the other view (preview <-> editor): the same place, not the first hit
+  const keyOf = (r: number) => (rowNumber ? rowNumber(r) : r);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const at = anchor?.current;
+    if (!el || !at?.restore) return;
+    at.restore = false;
+    skipJump.current = true;
+    let i = rowNumber ? rows.findIndex((_, k) => rowNumber(k) >= at.row) : Math.min(at.row, rows.length - 1);
+    if (i < 0) i = rows.length - 1;
+    el.scrollTop = frozenSet.has(i) ? 0 : placeOf(i) * ROW_H;
+    el.scrollLeft = at.left;
+    setScrollTop(el.scrollTop);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // New hits: go to the first one
   useEffect(() => {
     setHitIndex(0);
+    if (skipJump.current) {
+      skipJump.current = false;
+      return;
+    }
     if (hits.length && jump) requestAnimationFrame(() => scrollToCell(hits[0][0], hits[0][1]));
   }, [hits]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -191,9 +245,10 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight));
+    const measure = () => setBox({ width: el.clientWidth, height: el.clientHeight });
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setHeight(el.clientHeight);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -235,7 +290,7 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
     else if (top + headH + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + headH + ROW_H - el.clientHeight;
   };
 
-  const totalWidth = 48 + widths.reduce((a, b) => a + b, 0);
+  const totalWidth = labelW + widths.reduce((a, b) => a + b, 0);
 
   const renderRow = (r: number, isFrozen = false) => {
     const row = rows[r];
@@ -253,19 +308,32 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
         className="hover:bg-[rgba(255,255,255,0.025)]"
       >
         <td
-          className={`sticky left-0 px-2 text-center text-fg-3 select-none ${isFrozen ? 'z-20' : ''}`}
-          style={{ background: isSelected ? 'rgba(124,156,255,0.22)' : isFrozen ? 'var(--bg-elev)' : 'var(--bg)', boxShadow: edge, cursor: onSelectRow ? 'pointer' : 'default' }}
-          title={isFrozen ? 'Frozen row (Settings > Tables)' : undefined}
+          // Always above the cells (also the frozen columns), on an opaque background
+          className="sticky left-0 z-[3] px-2 text-center text-fg-3 select-none overflow-hidden whitespace-nowrap"
+          style={{
+            background: solid(isSelected ? 'rgba(124,156,255,0.22)' : undefined, isFrozen ? 'var(--bg-elev)' : 'var(--bg)'),
+            boxShadow: edge,
+            cursor: onSelectRow ? 'pointer' : 'default',
+          }}
+          title={isFrozen ? 'Frozen row' : undefined}
           onClick={() => onSelectRow?.(r)}
         >
           {rowLabel ? rowLabel(r) : r + 1}
         </td>
-        {columns.map((_, c) => {
+        {order.map(c => {
           const key = `${r},${c}`;
           const value = row[c] ?? '';
           const isActive = active?.r === r && active?.c === c;
           const isLocked = locked?.has(key);
           const isCurrent = current?.[0] === r && current?.[1] === c;
+          const left = lefts.get(c);
+          const tint = edited?.has(key) ? 'rgba(62,207,142,0.13)' : isCurrent ? 'rgba(250,204,21,0.12)' : undefined;
+          const shadows = [
+            isActive ? 'inset 0 0 0 2px var(--accent)' : isCurrent ? 'inset 0 0 0 1px rgba(250,204,21,0.7)' : edge,
+            c === lastFrozenCol ? 'inset -2px 0 0 var(--line-strong)' : undefined,
+            // A table border does not move with a sticky cell: draw the line in the cell
+            left !== undefined ? 'inset 1px 0 0 var(--line)' : undefined,
+          ].filter(Boolean);
           return (
             <td
               key={c}
@@ -273,9 +341,17 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
               title={isLocked ? 'Formula cell: edit it in Excel' : value.length > 40 ? value : undefined}
               className={`relative px-3 truncate ${isLocked ? 'text-fg-3 italic' : 'text-fg-2'} ${editable && !isLocked ? 'cursor-text' : ''}`}
               style={{
-                borderLeft: '1px solid var(--line)',
-                background: edited?.has(key) ? 'rgba(62,207,142,0.13)' : isCurrent ? 'rgba(250,204,21,0.12)' : undefined,
-                boxShadow: isActive ? 'inset 0 0 0 2px var(--accent)' : isCurrent ? 'inset 0 0 0 1px rgba(250,204,21,0.7)' : edge,
+                borderLeft: left !== undefined ? 'none' : '1px solid var(--line)',
+                // A frozen column stays at the left, opaque, below the row numbers
+                ...(left !== undefined
+                  ? {
+                      position: 'sticky',
+                      left,
+                      zIndex: 2,
+                      background: solid(tint ?? (isSelected ? 'var(--accent-soft)' : undefined), isFrozen ? 'var(--bg-elev)' : 'var(--bg)'),
+                    }
+                  : { background: tint }),
+                boxShadow: shadows.join(', ') || undefined,
               }}
             >
               {isActive ? (
@@ -310,23 +386,44 @@ export const VirtualGrid: React.FC<VirtualGridProps> = ({
       ref={scrollRef}
       className="h-full overflow-auto select-text"
       onScroll={e => {
-        const top = (e.target as HTMLDivElement).scrollTop;
+        const el = e.target as HTMLDivElement;
+        const top = el.scrollTop;
         requestAnimationFrame(() => setScrollTop(top));
+        if (anchor && rows.length) {
+          const r = rowAt(Math.min(bodyCount - 1, Math.floor(top / ROW_H)));
+          anchor.current = { row: keyOf(Math.min(r, rows.length - 1)), left: el.scrollLeft, restore: false };
+        }
       }}
     >
       <table className="border-collapse num text-[12.5px]" style={{ tableLayout: 'fixed', width: totalWidth }}>
         <colgroup>
-          <col style={{ width: 48 }} />
-          {widths.map((w, i) => <col key={i} style={{ width: w }} />)}
+          <col style={{ width: labelW }} />
+          {order.map(c => <col key={c} style={{ width: widths[c] }} />)}
         </colgroup>
         <thead className="sticky top-0 z-10" style={{ background: 'var(--surface-2)' }}>
           <tr style={{ height: ROW_H }}>
-            <th className="sticky left-0 z-20" style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--line-strong)' }} />
-            {columns.map((col, i) => (
-              <th key={i} className="px-3 text-left text-fg font-semibold truncate" style={{ borderBottom: '1px solid var(--line-strong)', borderLeft: '1px solid var(--line)' }} title={col}>
-                {col}
-              </th>
-            ))}
+            <th className="sticky left-0 z-[3]" style={{ background: 'var(--surface-2)', borderBottom: '1px solid var(--line-strong)' }} />
+            {order.map(c => {
+              const left = lefts.get(c);
+              return (
+                <th
+                  key={c}
+                  className="px-3 text-left text-fg font-semibold truncate"
+                  style={{
+                    borderBottom: '1px solid var(--line-strong)',
+                    borderLeft: left !== undefined ? 'none' : '1px solid var(--line)',
+                    ...(left !== undefined ? { position: 'sticky', left, zIndex: 2, background: 'var(--surface-2)' } : {}),
+                    boxShadow: [
+                      c === lastFrozenCol ? 'inset -2px 0 0 var(--line-strong)' : '',
+                      left !== undefined ? 'inset 1px 0 0 var(--line)' : '',
+                    ].filter(Boolean).join(', ') || undefined,
+                  }}
+                  title={left !== undefined ? `${columns[c]} (frozen column)` : columns[c]}
+                >
+                  {columns[c]}
+                </th>
+              );
+            })}
           </tr>
           {frozen.map(r => renderRow(r, true))}
         </thead>

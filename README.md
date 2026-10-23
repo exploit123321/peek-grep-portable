@@ -35,6 +35,7 @@ was read, and the **?** button in the search field lists these examples.
 | `[invoice, receipt]` | One expandable row per element, each with all its hits. Spaces after the comma do not matter |
 | `.xlsx:[total, tax]` | Text around the brackets applies to every element (`[invoice, receipt]+.pdf` too) |
 | `tot*l`, `rec?ipt` | Wildcards: `*` any characters, `?` one character (in text: inside a word) |
+| `.xlsx:*/-6403s` | A wildcard, then literal text: ABC-6403s and ASJGAS-6403s (not "plain 6403s"). After `*` or `?` the `/` makes the rest literal |
 | `/e-mail`, `"e-mail"` | `/` (the rest) or quotes: literal text. Works everywhere: `invoice:/total+tax` |
 | `invoice;dm 2024;size>1mb` | Filters after `;` (dates and size, below) |
 
@@ -107,7 +108,8 @@ screen under the search field, with their hit counts. Cells pasted into the tabl
 become separate values, and **Split** turns a value with spaces into one value per word.
 
 **Find in Quick Look:** Ctrl+F, or just start typing. Wildcards and `a+b` work there too.
-Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. PDFs too: they are
+Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. Find also works while
+editing (typing then goes to the editor, not to the find box). PDFs too: they are
 drawn in the app (pdf.js, in `frontend\dist`, no internet), the preview opens at the first hit, and
 hits on every page are counted.
 
@@ -120,6 +122,14 @@ hits on every page are counted.
 | `.xlsx` `.xlsm` | Cell values in the whole sheet (preview limit: 300,000 rows, 200 columns). Formatting, other sheets, and macros stay. Formula cells are locked. |
 | `.docx` | Paragraph and table-cell text. Unchanged paragraphs stay exactly as they are. Paragraphs with pictures, links, fields, or tracked changes are locked. |
 | `.doc` `.xls` `.ppt` | Not editable (use Open). |
+
+Edit opens where the preview was (tables: the same row, column, and sheet; text: the same part of
+the file), and Cancel or Save goes back to the same place.
+
+**Frozen rows and columns of one file:** in Quick Look of an Excel or CSV file, the **Rows** and
+**Cols** fields next to the snowflake. Empty fields use the settings (shown in grey); anything typed
+there replaces both settings for this file (`0` freezes nothing), and **×** goes back to the
+settings. Kept per file in this app's browser profile (`data\webview`).
 
 A save refuses a file that changed on disk since you opened it, and fails safely when the file is open in another program. Ctrl+S saves, Esc leaves edit mode. The new text is in the index at once, so a search finds it right after the save, and the results refresh.
 
@@ -136,6 +146,7 @@ A save refuses a file that changed on disk since you opened it, and fails safely
 | `start_with_windows` | `false` | Start when you sign in to Windows: one value for your user in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, kept up to date when the folder moves, removed when you turn it off |
 | `start_hidden` | `true` | When Windows starts the app: stay in the tray (`true`) or open the window |
 | `release_window_on_hide` | `true` | Close the WebView while the app is in the tray: about 110 MB instead of 300 MB; the window opens again at once |
+| `freeze_columns` | (none) | Columns that stay at the left of Excel and CSV views, next to the row numbers: letters or numbers, for example `"A"`, `"A-B"` or `"1, 3"` (saved as letters). Frozen columns come first, in order. At most 50; a narrow window shows as many as leave room to scroll |
 | `freeze_rows` | (none) | Rows that stay at the top of Excel and CSV views (preview and editor), under the column names, for example `"1"`, `"1-3"` or `"1, 4, 6-8"`. The rows do not have to be at the top: the frozen rows are shown in order at the top and the rest scroll below them. Row numbers are the ones at the left of the table (in a CSV file, row 1 is the first row after the header). At most 100; a short window shows as many as fit |
 | `backups` | `{"enabled": true, "per_file": 3, "gap_minutes": 60}` | Backups when the editor saves: on/off, how many are kept per file (1–50), and the minutes in which more saves make no new backup (0 = a backup at every save) |
 | `big_files` | (none) | Large files rules (Settings > Large files): `[{"kind": "type", "value": ".csv"}, {"kind": "name", "value": "big"}, {"kind": "file", "value": "D:\\Data\\export.csv"}]`. Matching files are read for the text search up to 200 MB and 100 million characters |

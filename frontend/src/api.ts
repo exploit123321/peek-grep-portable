@@ -96,6 +96,8 @@ export interface AppOptions {
   release_window_on_hide: boolean;
   /** Table rows kept at the top, like "1" or "1-3, 7" (empty: none) */
   freeze_rows: string;
+  /** Table columns kept at the left, like "A" or "A-B, E" (empty: none) */
+  freeze_columns: string;
 }
 
 export interface SearchParams {

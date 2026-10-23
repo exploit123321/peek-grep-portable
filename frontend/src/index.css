@@ -344,3 +344,9 @@ mark.grid-hit-current { background: rgba(250, 204, 21, 0.85); color: #111; box-s
 /* The page picture shows the text: hits only color the background, lightly enough to read it */
 .textLayer span::highlight(pg-hit) { color: transparent; }
 .textLayer span::highlight(pg-hit-current) { color: transparent; background-color: rgba(250, 204, 21, 0.5); }
+
+/* Find while editing text: marks on a layer behind the text field (the text itself is drawn above) */
+mark.edit-hit,
+mark.edit-hit-current { color: transparent; border-radius: 2px; }
+mark.edit-hit { background: rgba(250, 204, 21, 0.26); }
+mark.edit-hit-current { background: rgba(250, 204, 21, 0.6); }

@@ -210,6 +210,19 @@ class _Scanner:
                 i += 1
                 term_start = True
                 continue
+            if o.literal_char and ch == o.literal_char and o.wildcards and buf and buf[-1] in "*?":
+                # "*/-6403s": any characters, then the literal rest ("ABC-6403s"). After other
+                # characters the sign is just a character (dates like 01/03/2024).
+                flush()
+                j = i + 1
+                if in_bracket:
+                    while j < n and q[j] not in self.item_end:
+                        j += 1
+                else:
+                    j = n
+                tokens.append((_TEXT, q[i + 1:j], True))
+                i = j
+                continue
             if o.not_char and ch == o.not_char and self._dash_starts_part(buf, i):
                 # "invoice-old": a new part that leaves out files with "old"
                 flush()
