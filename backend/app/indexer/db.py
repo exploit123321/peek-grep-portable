@@ -1,6 +1,7 @@
 """SQLite FTS5 database management and search operations with concurrency lock & backoff."""
 
 import html
+import json
 import os
 import re
 import sqlite3
@@ -87,6 +88,16 @@ def _run_transaction(db_path: Optional[str], statements: Callable[[sqlite3.Curso
             cur.execute("ROLLBACK;")
             raise
     return execute_write_with_retry(_tx)
+
+def _delete_fts_paths(cur: sqlite3.Cursor, paths: List[str]) -> None:
+    """Remove the full-text rows of these paths in one pass.
+
+    The FTS5 path column is UNINDEXED, so each "WHERE path = ?" reads the whole text table.
+    One IN query reads it one time for the full batch.
+    """
+    if paths:
+        cur.execute("DELETE FROM files_content_fts WHERE path IN (SELECT value FROM json_each(?));",
+                    (json.dumps(paths),))
 
 def init_db(db_path: Optional[str] = None) -> None:
     """Initialize SQLite database tables and FTS5 virtual table."""
@@ -232,7 +243,7 @@ def upsert_files_batch(
         ))
         # Decoupled FTS handling: only modify FTS5 table if content was extracted
         if content_val:
-            fts_paths.append((norm_path,))
+            fts_paths.append(norm_path)
             fts_inserts.append((norm_path, content_val))
 
     def _upsert(cur: sqlite3.Cursor) -> None:
@@ -258,8 +269,7 @@ def upsert_files_batch(
                 END;
         """, meta_tuples)
 
-        if fts_paths:
-            cur.executemany("DELETE FROM files_content_fts WHERE path = ?;", fts_paths)
+        _delete_fts_paths(cur, fts_paths)
         if fts_inserts:
             cur.executemany("INSERT INTO files_content_fts (path, content) VALUES (?, ?);", fts_inserts)
 
@@ -267,11 +277,17 @@ def upsert_files_batch(
 
 def delete_file(path: str, db_path: Optional[str] = None) -> None:
     """Remove a file from both metadata and full-text index."""
-    norm_path = os.path.normpath(os.path.abspath(path))
+    delete_files([path], db_path=db_path)
+
+def delete_files(paths: List[str], db_path: Optional[str] = None) -> None:
+    """Remove files from both metadata and full-text index in one transaction."""
+    norm_paths = [os.path.normpath(os.path.abspath(p)) for p in paths]
+    if not norm_paths:
+        return
 
     def _delete(cur: sqlite3.Cursor) -> None:
-        cur.execute("DELETE FROM files_content_fts WHERE path = ?;", (norm_path,))
-        cur.execute("DELETE FROM files_meta WHERE path = ?;", (norm_path,))
+        _delete_fts_paths(cur, norm_paths)
+        cur.executemany("DELETE FROM files_meta WHERE path = ?;", [(p,) for p in norm_paths])
 
     _run_transaction(db_path, _delete)
 
@@ -390,13 +406,13 @@ def mark_files_fts_indexed(
     def _mark(cur: sqlite3.Cursor) -> None:
         if indexed_items:
             delete_tuples = [(p,) for p, _ in indexed_items]
-            cur.executemany("DELETE FROM files_content_fts WHERE path = ?;", delete_tuples)
+            _delete_fts_paths(cur, [p for p, _ in indexed_items])
             cur.executemany("INSERT INTO files_content_fts (path, content) VALUES (?, ?);", indexed_items)
             cur.executemany("UPDATE files_meta SET fts_indexed = 1 WHERE path = ?;", delete_tuples)
 
         if skipped_paths:
             skip_tuples = [(p,) for p in skipped_paths]
-            cur.executemany("DELETE FROM files_content_fts WHERE path = ?;", skip_tuples)
+            _delete_fts_paths(cur, skipped_paths)
             cur.executemany("UPDATE files_meta SET fts_indexed = 2 WHERE path = ?;", skip_tuples)
 
     _run_transaction(db_path, _mark)

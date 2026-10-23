@@ -13,8 +13,12 @@ from app.config import (
     SKIP_PATH_PATTERNS,
     SYSTEM_IGNORE_DIRS,
 )
-from app.indexer.crawler import process_single_file
-from app.indexer.db import delete_file
+from app.indexer.crawler import build_file_record
+from app.indexer.db import delete_files, upsert_files_batch
+
+# Maximum files in one database write. Each write reads the full-text table one time,
+# so a large group of changes costs a few writes instead of one write for each file.
+WATCHER_BATCH_SIZE = 200
 
 
 def _key(path: str) -> str:
@@ -143,10 +147,15 @@ class DebouncedChangeHandler(FileSystemEventHandler):
             to_delete: List[str] = []
 
             with self._lock:
-                for path, timestamp in list(self._pending_updates.items()):
-                    if now - timestamp >= self.debounce_sec:
-                        to_update.append(path)
-                        del self._pending_updates[path]
+                # Newest changes first, so a new file does not wait behind an old backlog
+                due = sorted(
+                    ((timestamp, path) for path, timestamp in self._pending_updates.items()
+                     if now - timestamp >= self.debounce_sec),
+                    reverse=True,
+                )
+                for _, path in due[:WATCHER_BATCH_SIZE]:
+                    to_update.append(path)
+                    del self._pending_updates[path]
 
                 if self._pending_deletes:
                     # Apps (and this one) save by writing a temporary file and renaming it over
@@ -158,17 +167,18 @@ class DebouncedChangeHandler(FileSystemEventHandler):
                             to_delete.append(path)
                     self._pending_deletes.clear()
 
-            for path in to_delete:
+            if to_delete:
                 try:
-                    delete_file(path, db_path=self.db_path)
+                    delete_files(to_delete, db_path=self.db_path)
                 except Exception as e:
-                    print(f"[Watcher] Error deleting {path}: {e}")
+                    print(f"[Watcher] Error deleting {len(to_delete)} files: {e}")
 
-            for path in to_update:
+            if to_update:
+                records = [rec for rec in map(build_file_record, to_update) if rec]
                 try:
-                    process_single_file(path, db_path=self.db_path)
+                    upsert_files_batch(records, db_path=self.db_path)
                 except Exception as e:
-                    print(f"[Watcher] Error processing {path}: {e}")
+                    print(f"[Watcher] Error processing {len(records)} files: {e}")
 
     def stop(self) -> None:
         self._running = False

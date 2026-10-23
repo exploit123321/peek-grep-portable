@@ -109,9 +109,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           </svg>
         </span>
         <span className="font-display text-[13px] font-semibold tracking-[-0.01em] text-fg">Peek &amp; Grep</span>
-        <span className="text-[10.5px] font-medium px-1.5 py-[1px] rounded-[5px] text-fg-3" style={{ boxShadow: 'inset 0 0 0 1px var(--line-strong)' }}>
-          Portable
-        </span>
       </div>
 
       <div className="flex items-center gap-1.5">

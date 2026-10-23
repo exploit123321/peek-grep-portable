@@ -643,14 +643,37 @@ def toggle_autostart(icon=None, item=None) -> None:
 
 # -- tray and hotkey -----------------------------------------------------------------
 
-def generate_tray_icon() -> Image.Image:
-    """64x64 tray icon: a rounded dark tile with a blue lens."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+def generate_tray_icon(size: int = 64) -> Image.Image:
+    """App icon: a rounded dark tile with a blue lens (drawn on a 64-unit grid)."""
+    k = size / 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle([2, 2, 62, 62], radius=16, fill=(20, 21, 26, 255), outline=(70, 76, 96, 255), width=2)
-    draw.ellipse([15, 13, 41, 39], outline=(124, 156, 255, 255), width=5)
-    draw.line([37, 36, 49, 48], fill=(124, 156, 255, 255), width=7)
+    draw.rounded_rectangle([2 * k, 2 * k, 62 * k, 62 * k], radius=16 * k, fill=(20, 21, 26, 255),
+                           outline=(70, 76, 96, 255), width=max(1, round(2 * k)))
+    draw.ellipse([15 * k, 13 * k, 41 * k, 39 * k], outline=(124, 156, 255, 255), width=max(1, round(5 * k)))
+    draw.line([37 * k, 36 * k, 49 * k, 48 * k], fill=(124, 156, 255, 255), width=max(1, round(7 * k)))
     return img
+
+
+def app_icon_path() -> Path:
+    """The window and taskbar icon as an .ico file in the data folder (made on the first start)."""
+    path = DATA_DIR / "app.ico"
+    if not path.exists():
+        generate_tray_icon(256).save(path, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
+    return path
+
+
+def set_window_icon() -> None:
+    """Put the app icon on the window. Without it, Windows shows the icon of pythonw.exe."""
+    try:
+        from System import Action  # pythonnet, loaded by pywebview
+        from System.Drawing import Icon
+
+        form = main_window.native
+        icon = Icon(str(app_icon_path()))
+        form.Invoke(Action(lambda: setattr(form, "Icon", icon)))
+    except Exception as e:
+        print(f"[Desktop App] Could not set the window icon: {e}")
 
 
 def hotkey_label() -> str:
@@ -709,6 +732,7 @@ def setup_global_hotkey():
 def on_window_shown():
     global window_visible
     window_visible = True
+    set_window_icon()
     focus_window_native()
 
 
@@ -763,6 +787,12 @@ def main():
     # Same pixel units as pywebview from the start (it sets this too), so screen math matches
     try:
         ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+    # An own taskbar ID: the taskbar shows the window icon, not the Python icon of pythonw.exe
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(autostart_name())
     except Exception:
         pass
 
