@@ -19,13 +19,22 @@ export function escapeRegExp(s: string): string {
 }
 
 /** A term from plain text: "*" and "?" are wildcards unless the term is literal. */
-export function makeTerm(text: string, literal = false, field: HighlightTerm['field'] = 'any', wildcards = true): HighlightTerm {
+export function makeTerm(
+  text: string, literal = false, field: HighlightTerm['field'] = 'any', wildcards = true, literalChar = '',
+): HighlightTerm {
   const pieces: [PieceKind, string][] = [];
   if (literal || !wildcards) {
     if (text) pieces.push(['text', text]);
   } else {
     let buf = '';
-    for (const ch of text) {
+    const chars = [...text];
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i];
+      if (literalChar && ch === literalChar && (chars[i - 1] === '*' || chars[i - 1] === '?')) {
+        // "*/-6403s": the rest after the literal sign is plain text (as in the search field)
+        buf = chars.slice(i + 1).join('');
+        break;
+      }
       if (ch === '*' || ch === '?') {
         if (buf) pieces.push(['text', buf]);
         buf = '';
@@ -108,14 +117,7 @@ export function parseFindText(text: string, o: SearchOptions = DEFAULT_SEARCH_OP
   return parts
     .map(part => part.trim())
     .filter(Boolean)
-    .map(part => makeTerm(part, false, 'text', o.wildcards));
-}
-
-/** Plain text of the first text term (for the PDF viewer, which has its own search). */
-export function plainSearchText(terms: HighlightTerm[]): string {
-  const term = textTerms(terms)[0];
-  if (!term) return '';
-  return term.pieces.filter(p => p[0] === 'text').map(p => p[1]).join(' ').trim();
+    .map(part => makeTerm(part, false, 'text', o.wildcards, o.literal_char));
 }
 
 // -- pasted lists --------------------------------------------------------------

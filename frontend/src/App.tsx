@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ClipboardList, FileCode2, FileText, Image as ImageIcon, Layers, Pencil, SearchX, Sheet, Sparkles, X } from 'lucide-react';
-import { api, AppOptions, AppSettings, BackupOptions, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
+import { api, AppOptions, AppSettings, BackupOptions, BigFileRule, Category, ExplainChip, FolderDetails, IndexerStatus, SearchItem } from './api';
 import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
 import { ResultsList, Row } from './components/ResultsList';
 import { KeyHint, QuickLookModal } from './components/QuickLookModal';
+import { FreezeContext } from './components/VirtualGrid';
+import { parseFreeze } from './utils/freeze';
 import { Onboarding } from './components/Onboarding';
 import { FoldersPanel } from './components/FoldersPanel';
 import { ListEditor } from './components/ListEditor';
@@ -79,6 +81,10 @@ function Workspace() {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const freeze = useMemo(
+    () => parseFreeze(settings?.app.freeze_rows ?? '', settings?.app.freeze_columns ?? ''),
+    [settings?.app.freeze_rows, settings?.app.freeze_columns],
+  );
   const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYMAP);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
@@ -333,7 +339,9 @@ function Workspace() {
     if (!rows.length) return;
     setKeyboardFocus(true);
     let j = selected;
-    for (let k = selected + dir; k >= 0 && k < rows.length; k += dir) {
+    // Nothing chosen yet (a new search): the first row is only shown as chosen, so ↓ stops there first
+    const from = found < 0 && dir === 1 ? selected - 1 : selected;
+    for (let k = from + dir; k >= 0 && k < rows.length; k += dir) {
       const r = rows[k];
       if (r.kind === 'more' || (onlyFiles && r.kind !== 'item')) continue;
       j = k;
@@ -345,7 +353,7 @@ function Workspace() {
       const r = rows[k];
       if (r.kind === 'more') loadMore(r.group);
     }
-  }, [rows, selected, loadMore]);
+  }, [rows, selected, found, loadMore]);
 
   // Desktop window events (tray menu, hotkey)
   useEffect(() => {
@@ -608,6 +616,15 @@ function Workspace() {
     }
   };
 
+  const saveBigFiles = async (rules: BigFileRule[]): Promise<string | null> => {
+    try {
+      setSettings(await api.saveBigFiles(rules));
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+
   const saveBackupOptions = async (values: Partial<BackupOptions>): Promise<string | null> => {
     try {
       setSettings(await api.saveBackupSettings(values));
@@ -675,6 +692,7 @@ function Workspace() {
   })();
 
   return (
+    <FreezeContext.Provider value={freeze}>
     <div className="relative flex flex-col h-full overflow-hidden" style={{ background: 'radial-gradient(1200px 500px at 50% -220px, rgba(124,156,255,0.07), transparent 70%), var(--bg)' }}>
       <TitleBar
         status={status}
@@ -897,6 +915,7 @@ function Workspace() {
           settings={settings}
           onChange={saveAppOptions}
           onBackupsChange={saveBackupOptions}
+          onBigFilesChange={saveBigFiles}
           onOpenSearchSettings={() => { setAppSettingsOpen(false); setSearchSettingsOpen(true); }}
           onOpenShortcuts={() => { setAppSettingsOpen(false); setShortcutsOpen(true); }}
           onClose={() => {
@@ -943,6 +962,7 @@ function Workspace() {
         </svg>
       </div>
     </div>
+    </FreezeContext.Provider>
   );
 }
 

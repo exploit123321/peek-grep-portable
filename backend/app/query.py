@@ -36,7 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
-from app.params import Param, parse_params, split_params
+from app.params import Param, parse_param, parse_params, split_params
 from app.search_options import DEFAULTS, SearchOptions
 
 # Token kinds
@@ -209,6 +209,19 @@ class _Scanner:
                 tokens.append((_COLON,))
                 i += 1
                 term_start = True
+                continue
+            if o.literal_char and ch == o.literal_char and o.wildcards and buf and buf[-1] in "*?":
+                # "*/-6403s": any characters, then the literal rest ("ABC-6403s"). After other
+                # characters the sign is just a character (dates like 01/03/2024).
+                flush()
+                j = i + 1
+                if in_bracket:
+                    while j < n and q[j] not in self.item_end:
+                        j += 1
+                else:
+                    j = n
+                tokens.append((_TEXT, q[i + 1:j], True))
+                i = j
                 continue
             if o.not_char and ch == o.not_char and self._dash_starts_part(buf, i):
                 # "invoice-old": a new part that leaves out files with "old"
@@ -420,11 +433,20 @@ def _plain_element(query: str, opts: SearchOptions) -> Element:
     return el
 
 
+def _is_param(segment: str, date_order: str) -> bool:
+    try:
+        parse_param(segment, date_order)
+        return True
+    except ValueError:
+        return False
+
+
 def parse_query(query: str, opts: SearchOptions = DEFAULTS) -> QueryPlan:
     """Parse the search field with the given search settings."""
     if not opts.enabled:
         return QueryPlan(raw=query or "", grouped=False, elements=[_plain_element(query or "", opts)])
-    text, segments = split_params(query or "", opts.param_char, opts.quotes, opts.group_open, opts.group_close)
+    text, segments = split_params(query or "", opts.param_char, opts.quotes, opts.group_open, opts.group_close,
+                                  opts.text_char, opts.and_char, lambda seg: _is_param(seg, opts.date_order))
     params, errors = parse_params(segments, opts.date_order)
     tokens, _, _, _ = _Scanner(text, opts).scan(0, False)
     grouped, combos = _expand(tokens, 60)

@@ -13,6 +13,11 @@ export function textSpans(text: string, terms: HighlightTerm[], limit = MAX_HITS
     re.lastIndex = 0;
     return re.test(text);
   });
+  return regexSpans(text, regexes, limit);
+}
+
+/** Hit spans of regexes that were already picked (for views that search several texts). */
+export function regexSpans(text: string, regexes: RegExp[], limit = MAX_HITS): [number, number][] {
   const spans: [number, number][] = [];
   for (const re of regexes) {
     re.lastIndex = 0;

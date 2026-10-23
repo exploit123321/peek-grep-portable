@@ -10,8 +10,8 @@ from pydantic import BaseModel
 
 from app.indexer.smart_search import clear_cache
 from app.search_options import DEFAULTS, PRESET_LABELS, PRESETS, validate
-from app.settings import DEFAULT_HOTKEY
-from app.state import desktop_hooks, settings_store
+from app.settings import DEFAULT_HOTKEY, normalize_freeze_columns, normalize_freeze_rows
+from app.state import desktop_hooks, index_manager, settings_store
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -50,6 +50,7 @@ def _settings() -> Dict[str, Any]:
         "app": settings_store.app_settings(),
         "autostart_available": desktop_hooks.get("set_autostart") is not None,
         "backups": settings_store.backups,
+        "big_files": settings_store.big_files,
     }
 
 
@@ -113,11 +114,20 @@ async def save_backup_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.put("/settings/app")
 async def save_app_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Start with Windows, start in the tray, the screen to open on, and freeing memory in the tray."""
+    """Start with Windows, start in the tray, the screen to open on, freeing memory in the tray,
+    and the frozen table rows."""
     keys = settings_store.APP_KEYS
-    bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, bool)]
+    text = settings_store.APP_TEXT_KEYS
+    bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, str if k in text else bool)]
     if bad:
         raise HTTPException(status_code=400, detail=f"Unknown or not true/false: {', '.join(bad)}.")
+    try:
+        if "freeze_rows" in payload:
+            normalize_freeze_rows(payload["freeze_rows"])
+        if "freeze_columns" in payload:
+            normalize_freeze_columns(payload["freeze_columns"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     before = settings_store.app_settings()
     after = {**before, **payload}
     if (after["start_with_windows"], after["start_hidden"]) != (before["start_with_windows"], before["start_hidden"]):
@@ -130,4 +140,20 @@ async def save_app_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Windows did not accept the startup entry: {e}")
     settings_store.set_app_settings(payload)
+    return _settings()
+
+
+@router.put("/settings/big_files")
+async def save_big_files(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Large files rules: {"rules": [{"kind": "type" | "name" | "file", "value": "..."}]}.
+    Files that match a new rule are read again."""
+    from app.big_files import new_rules, normalize_rules
+    from app.indexer.db import requeue_big_files
+    try:
+        rules = normalize_rules(payload.get("rules"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    added = new_rules(settings_store.big_files, rules)
+    settings_store.set_big_files(rules)
+    await run_in_threadpool(requeue_big_files, added, index_manager.db_path)
     return _settings()

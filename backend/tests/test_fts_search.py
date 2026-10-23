@@ -5,9 +5,11 @@ import sqlite3
 import pytest
 from app.indexer.db import (
     count_files,
+    count_unindexed_content_files,
     delete_file,
     escape_fts5_query,
     get_db_connection,
+    get_unindexed_content_files,
     init_db,
     search_files,
     upsert_file,
@@ -189,3 +191,82 @@ def test_concurrent_writes_no_lock_error(test_db):
             f.result()
 
     assert count_files(test_db) > 0
+
+
+def test_office_files_have_a_larger_size_limit(test_db):
+    """Office files are compressed: a 30 MB workbook is still read, a 30 MB text file is not."""
+    from app.indexer.db import upsert_files_batch
+    mb = 1024 * 1024
+    upsert_files_batch([
+        {"path": f"/tmp/big.{ext}", "filename": f"big.{ext}", "extension": f".{ext}", "size_bytes": 30 * mb,
+         "mtime": 1.0, "is_text": False, "category": "doc"}
+        for ext in ("xlsx", "txt")
+    ], db_path=test_db)
+    exts = (".xlsx", ".txt")
+    both = dict(max_size_bytes=10 * mb, office_max_bytes=100 * mb, db_path=test_db)
+    assert [r["extension"] for r in get_unindexed_content_files(exts, **both)] == [".xlsx"]
+    assert count_unindexed_content_files(exts, **both) == 1
+    assert get_unindexed_content_files(exts, max_size_bytes=10 * mb, db_path=test_db) == []
+
+
+def test_upgrade_reads_large_office_files_again(test_db):
+    """Text cut at the old 2 million character limit is read again after the update."""
+    from app.indexer.db import mark_files_fts_indexed, upsert_files_batch
+    upsert_files_batch([
+        {"path": f"/tmp/{name}", "filename": name, "extension": "." + name.split(".")[1], "size_bytes": size,
+         "mtime": 1.0, "is_text": False, "category": "doc"}
+        for name, size in (("big.xlsx", 3_000_000), ("small.xlsx", 9_000), ("big.txt", 3_000_000))
+    ], db_path=test_db)
+    mark_files_fts_indexed([(os.path.normpath(f"/tmp/{n}"), "x") for n in ("big.xlsx", "small.xlsx", "big.txt")], [],
+                           db_path=test_db)
+    conn = get_db_connection(test_db)
+    conn.execute("PRAGMA user_version = 0;")
+    conn.commit()
+    init_db(test_db)
+    rows = dict(get_db_connection(test_db).execute("SELECT filename, fts_indexed FROM files_meta;").fetchall())
+    assert rows == {"big.xlsx": 0, "small.xlsx": 1, "big.txt": 1}
+    # Only once
+    mark_files_fts_indexed([(os.path.normpath("/tmp/big.xlsx"), "x")], [], db_path=test_db)
+    init_db(test_db)
+    assert get_db_connection(test_db).execute("SELECT fts_indexed FROM files_meta WHERE filename = 'big.xlsx';").fetchone()[0] == 1
+
+
+def test_old_index_moves_to_file_ids(tmp_path):
+    """An index from before version 2 (texts keyed by path) gets file ids and keeps every text."""
+    db_file = str(tmp_path / "old.db")
+    conn = sqlite3.connect(db_file)
+    conn.executescript("""
+        CREATE TABLE files_meta (path TEXT PRIMARY KEY, filename TEXT NOT NULL, extension TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL, mtime REAL NOT NULL, is_text INTEGER NOT NULL, category TEXT NOT NULL,
+            fts_indexed INTEGER NOT NULL DEFAULT 0, seen_at REAL NOT NULL DEFAULT 0,
+            ctime REAL NOT NULL DEFAULT 0, atime REAL NOT NULL DEFAULT 0);
+        CREATE VIRTUAL TABLE files_content_fts USING fts5(path UNINDEXED, content, tokenize = 'unicode61');
+        PRAGMA user_version = 1;
+    """)
+    for i, (name, text) in enumerate((("a.txt", "the quokka smiles"), ("b.txt", "a wombat digs"), ("c.txt", None))):
+        path = os.path.normpath(os.path.abspath(f"/data/{name}"))
+        conn.execute("INSERT INTO files_meta VALUES (?, ?, '.txt', 10, ?, 1, 'plain', ?, 0, 0, 0)",
+                     (path, name, 1.0 + i, 1 if text else 0))
+        if text:
+            conn.execute("INSERT INTO files_content_fts (path, content) VALUES (?, ?)", (path, text))
+    # A text whose meta row is missing must not survive
+    conn.execute("INSERT INTO files_content_fts (path, content) VALUES ('/gone.txt', 'orphan quokka')")
+    conn.commit()
+    conn.close()
+
+    init_db(db_file)
+    conn = sqlite3.connect(db_file)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert "id" in [r[1] for r in conn.execute("PRAGMA table_info(files_meta)")]
+    assert conn.execute("SELECT count(*) FROM files_content_fts").fetchone()[0] == 2
+    assert [r.filename for r in search_files("quokka", mode="content", db_path=db_file)] == ["a.txt"]
+    results = search_files("wombat", mode="content", db_path=db_file)
+    assert [r.filename for r in results] == ["b.txt"] and "<mark>wombat</mark>" in results[0].snippet
+    # Replacing and deleting texts work with the ids
+    upsert_file(path="/data/a.txt", filename="a.txt", extension=".txt", size_bytes=11, mtime=9.0, is_text=True,
+                category="plain", content="now a koala", db_path=db_file)
+    assert search_files("quokka", mode="content", db_path=db_file) == []
+    assert len(search_files("koala", mode="content", db_path=db_file)) == 1
+    delete_file("/data/a.txt", db_path=db_file)
+    assert search_files("koala", mode="content", db_path=db_file) == []
+    assert conn.execute("SELECT count(*) FROM files_content_fts").fetchone()[0] == 1

@@ -31,7 +31,7 @@ MAX_SHEETS = 30
 MAX_ROWS = 300_000   # rows kept for the preview (the UI draws only the visible rows)
 MAX_COLS = 200
 MAX_CELLS = 3_000_000  # cells kept for the preview of one sheet
-MAX_TEXT_CHARS = 2_000_000
+MAX_TEXT_CHARS = 32_000_000  # search text per file (about 600,000 spreadsheet rows)
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -53,7 +53,8 @@ def preview_kind(ext: str) -> Optional[str]:
 
 
 def extract_office(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
-                   sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False) -> Dict[str, Any]:
+                   sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False,
+                   text_cap: int = MAX_TEXT_CHARS) -> Dict[str, Any]:
     """Preview data and text for any supported Office file (new or old format).
 
     For workbooks, offset/limit select the row window and sheet_index one sheet (a page request,
@@ -67,7 +68,7 @@ def extract_office(path: str, ext: str, offset: int = 0, limit: int = MAX_ROWS,
         if ext in WORD_EXTENSIONS:
             return _docx(zf)
         if ext in EXCEL_EXTENSIONS:
-            return _xlsx(zf, offset, limit, sheet_index, with_text, quick)
+            return _xlsx(zf, offset, limit, sheet_index, with_text, quick, text_cap)
         if ext in POWERPOINT_EXTENSIONS:
             return _pptx(zf)
     raise ValueError(f"Not an Office file: {ext}")
@@ -116,11 +117,12 @@ def extract_office_preview(path: str, ext: str, quick: bool = False) -> Dict[str
     return result
 
 
-def extract_office_text(path: str, ext: str) -> Optional[str]:
+def extract_office_text(path: str, ext: str, text_cap: int = MAX_TEXT_CHARS) -> Optional[str]:
+    """text_cap: characters kept (more for files that match a Large files rule)."""
     try:
         # limit=0: text only, no preview cells
-        text = extract_office(path, ext, limit=0).get("text") or ""
-        return text[:MAX_TEXT_CHARS].strip() or None
+        text = extract_office(path, ext, limit=0, text_cap=text_cap).get("text") or ""
+        return text[:text_cap].strip() or None
     except Exception:
         return None
 
@@ -352,7 +354,8 @@ def _col(letters: str) -> int:
 
 
 def _xlsx_sheet_fast(zf: zipfile.ZipFile, part: str, shared: List[str], date_styles: set, date1904: bool,
-                     offset: int, limit: int, texts: Optional[List[str]], quick: bool = False):
+                     offset: int, limit: int, texts: Optional[List[str]], quick: bool = False,
+                     text_cap: int = MAX_TEXT_CHARS):
     import codecs
     from html import unescape
 
@@ -376,6 +379,7 @@ def _xlsx_sheet_fast(zf: zipfile.ZipFile, part: str, shared: List[str], date_sty
     current_r = -2
     current_list: Optional[List[str]] = None
     stopped = False
+    batch: List[str] = []
     with zf.open(part) as fh:
         while not stopped:
             chunk = fh.read(4 * 1024 * 1024)
@@ -460,11 +464,17 @@ def _xlsx_sheet_fast(zf: zipfile.ZipFile, part: str, shared: List[str], date_sty
                     cell_count += 1
                     if cell_count >= MAX_CELLS:
                         end_row = r + 1  # cell cap: the preview ends after this row
-                if texts is not None and chars <= MAX_TEXT_CHARS:
-                    texts.append(val)
+                if texts is not None and chars <= text_cap:
+                    batch.append(val)
                     chars += len(val) + 1
+                    if len(batch) >= 65536:
+                        # One string per batch: much less memory for sheets with millions of cells
+                        texts.append(" ".join(batch))
+                        batch.clear()
             if not chunk:
                 break
+    if texts is not None and batch:
+        texts.append(" ".join(batch))
     return row_lists, last_row, max_col, chars, end_row - offset, stopped
 
 
@@ -496,7 +506,8 @@ def rows_result(name: str, row_lists: Dict[int, List[str]], total_rows: int, off
 
 
 def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
-          sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False) -> Dict[str, Any]:
+          sheet_index: Optional[int] = None, with_text: bool = True, quick: bool = False,
+          text_cap: int = MAX_TEXT_CHARS) -> Dict[str, Any]:
     """quick: stop reading each sheet after the row window (the result is marked partial)."""
     wb = _read_xml(zf, "xl/workbook.xml")
     if wb is None:
@@ -534,12 +545,13 @@ def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
         part = rels.get(sheet.get(f"{R}id", ""), "")
         if not part or part not in zf.namelist():
             continue
-        if zf.getinfo(part).file_size > MAX_XML_BYTES * 4:
+        # A sheet larger than this is read only for the search text of a Large files rule (streamed)
+        if zf.getinfo(part).file_size > MAX_XML_BYTES * 4 and not (with_text and limit == 0 and text_cap > MAX_TEXT_CHARS):
             sheets.append(sheet_result(name, {(0, 0): "This sheet is too large to preview."}, 1))
             continue
         want_text = with_text and sheet_index is None
         fast = _xlsx_sheet_fast(zf, part, shared, date_styles, date1904, offset, limit,
-                                texts if want_text else None, quick)
+                                texts if want_text else None, quick, text_cap)
         if fast is not None:
             fast_cells, fast_last_row, fast_max_col, fast_chars, fast_limit, stopped = fast
             text_chars += fast_chars
@@ -558,7 +570,7 @@ def _xlsx(zf: zipfile.ZipFile, offset: int = 0, limit: int = MAX_ROWS,
                 row_index = int(el.get("r", row_index + 2)) - 1
                 # The preview keeps one row window; all rows go into the search text
                 keep = offset <= row_index < offset + limit
-                if not keep and (not want_text or text_chars > MAX_TEXT_CHARS):
+                if not keep and (not want_text or text_chars > text_cap):
                     if len(el):
                         last_row = max(last_row, row_index)
                         ref = el[-1].get("r")

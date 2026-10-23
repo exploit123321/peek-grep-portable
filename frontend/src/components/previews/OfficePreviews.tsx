@@ -28,8 +28,20 @@ function sheetHasHit(sheet: SheetData, list: HighlightTerm[]): boolean {
   return cells.some(v => !!v && regexes.some(re => test(re, v)));
 }
 
-export const WorkbookPreview: React.FC<{ sheets: SheetData[]; terms?: HighlightTerm[] }> = ({ sheets, terms }) => {
-  const [index, setIndex] = useState(0);
+export const WorkbookPreview: React.FC<{
+  sheets: SheetData[];
+  terms?: HighlightTerm[];
+  /** The shown sheet, kept by Quick Look (the editor opens on it) */
+  sheet?: number;
+  onSheet?: (i: number) => void;
+}> = ({ sheets, terms, sheet: shownSheet, onSheet }) => {
+  const [ownIndex, setOwnIndex] = useState(0);
+  const index = shownSheet ?? ownIndex;
+  const setIndex = (next: number | ((i: number) => number)) => {
+    const i = typeof next === 'function' ? next(index) : next;
+    setOwnIndex(i);
+    onSheet?.(i);
+  };
   // The first sheet with a hit; a new search (or find) moves on when this sheet has none
   const termsKey = JSON.stringify(terms ?? []);
   useEffect(() => {

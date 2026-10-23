@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FolderOpen, Keyboard, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
-import { api, AppOptions, AppSettings, BackupOptions, BackupsInfo } from '../api';
+import { FolderOpen, Keyboard, Plus, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { api, AppOptions, AppSettings, BackupOptions, BackupsInfo, BigFileRule } from '../api';
 import { SegmentedControl } from './motion/SegmentedControl';
 import { NumberInput, Row, Section, Switch } from './SearchSettingsPanel';
 
-// App settings: start with Windows, how the window opens, backups when the editor saves, and
+// App settings: start with Windows, how the window opens, frozen table rows, backups when the editor saves, and
 // links to the other settings. Each change is saved at once (data\settings.json; the startup
 // entry is in the Windows registry).
 
@@ -21,16 +21,93 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** Row numbers for frozen rows; saved on Enter or when the field loses focus. */
+const FreezeInput: React.FC<{ value: string; onSave: (v: string) => void }> = ({ value, onSave }) => {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const save = () => {
+    if (draft.trim() !== value) onSave(draft.trim());
+  };
+  return (
+    <input
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+      }}
+      placeholder="none"
+      spellCheck={false}
+      className="w-32 h-7 px-2 rounded-md num text-[12.5px] text-fg outline-none placeholder:text-fg-3"
+      style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }}
+    />
+  );
+};
+
+const RULE_KINDS = [
+  { id: 'type' as const, label: 'File type', placeholder: '.xlsx' },
+  { id: 'name' as const, label: 'Name has', placeholder: 'big' },
+  { id: 'file' as const, label: 'File', placeholder: 'D:\\Data\\export.csv' },
+];
+
+/** One Large files rule (saved on Enter or when the field loses focus); the last row adds a new one. */
+const BigFileRow: React.FC<{ rule: BigFileRule; isNew?: boolean; onSave: (r: BigFileRule) => void; onRemove?: () => void }> = ({
+  rule, isNew, onSave, onRemove,
+}) => {
+  const [kind, setKind] = useState(rule.kind);
+  const [value, setValue] = useState(rule.value);
+  const save = (k = kind) => {
+    const v = value.trim();
+    if (v && (v !== rule.value || k !== rule.kind)) onSave({ kind: k, value: v });
+  };
+  return (
+    <div className="flex items-center gap-2 min-h-[40px] px-3 py-1.5">
+      <SegmentedControl
+        options={RULE_KINDS.map(({ id, label }) => ({ id, label }))}
+        value={kind}
+        onChange={k => {
+          setKind(k);
+          if (!isNew) save(k);
+        }}
+        size="sm"
+      />
+      <input
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        // The add row saves on Enter or +, so the kind can still be picked after typing
+        onBlur={() => !isNew && save()}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); save(); }
+        }}
+        placeholder={isNew ? `Add: ${RULE_KINDS.find(k => k.id === kind)!.placeholder}` : ''}
+        spellCheck={false}
+        className="flex-1 min-w-0 h-7 px-2 rounded-md num text-[12.5px] text-fg outline-none placeholder:text-fg-3"
+        style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }}
+      />
+      {isNew ? (
+        <button type="button" className="icon-btn" title="Add" disabled={!value.trim()} onClick={() => save()}>
+          <Plus className="w-4 h-4" />
+        </button>
+      ) : (
+        <button type="button" className="icon-btn" title="Remove" onClick={onRemove}>
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 interface AppSettingsPanelProps {
   settings: AppSettings;
   onChange: (values: Partial<AppOptions>) => Promise<string | null>;
   onBackupsChange: (values: Partial<BackupOptions>) => Promise<string | null>;
+  onBigFilesChange: (rules: BigFileRule[]) => Promise<string | null>;
   onOpenSearchSettings: () => void;
   onOpenShortcuts: () => void;
   onClose: () => void;
 }
 
-export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, onChange, onBackupsChange, onOpenSearchSettings, onOpenShortcuts, onClose }) => {
+export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, onChange, onBackupsChange, onBigFilesChange, onOpenSearchSettings, onOpenShortcuts, onClose }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -52,6 +129,16 @@ export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, on
     setBusy(true);
     setError(await onBackupsChange(values));
     setBusy(false);
+  };
+
+  const changeBigFiles = async (rules: BigFileRule[]) => {
+    setBusy(true);
+    setError(await onBigFilesChange(rules));
+    setBusy(false);
+    // The edited row is drawn again: keep the focus in the panel, so Esc still closes it
+    requestAnimationFrame(() => {
+      if (!boxRef.current?.contains(document.activeElement)) boxRef.current?.focus();
+    });
   };
 
   const backupAction = async (action: () => Promise<BackupsInfo>) => {
@@ -132,6 +219,37 @@ export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, on
               label="Free memory in the tray"
               hint="About 110 MB instead of 300 MB while hidden; the window opens again at once"
             />
+          </Section>
+
+          <Section title="Tables">
+            <Row
+              label="Freeze rows"
+              hint={<>These rows stay at the top in Excel and CSV views, under the column names. For example <span className="font-mono">1</span>, <span className="font-mono">1-3</span> or <span className="font-mono">1, 4, 6-8</span>. Empty: none.</>}
+            >
+              <FreezeInput value={o.freeze_rows} onSave={v => change({ freeze_rows: v })} />
+            </Row>
+            <Row
+              label="Freeze columns"
+              hint={<>These columns stay at the left, next to the row numbers. Letters or numbers: <span className="font-mono">A</span>, <span className="font-mono">A-B</span> or <span className="font-mono">1, 3</span>. A file can have its own in Quick Look.</>}
+            >
+              <FreezeInput value={o.freeze_columns} onSave={v => change({ freeze_columns: v })} />
+            </Row>
+          </Section>
+
+          <Section title="Large files" note="text search reads up to 200 MB">
+            <div className="px-3 py-2 text-[11.5px] text-fg-3">
+              Other files: up to 10 MB (Office files 100 MB). A rule for a file type, a part of the name
+              (<span className="font-mono">big</span> also matches bigdata.xlsx) or one file (its full path).
+            </div>
+            {settings.big_files.map((rule, i) => (
+              <BigFileRow
+                key={`${i}-${rule.kind}-${rule.value}`}
+                rule={rule}
+                onSave={r => changeBigFiles(settings.big_files.map((x, k) => (k === i ? r : x)))}
+                onRemove={() => changeBigFiles(settings.big_files.filter((_, k) => k !== i))}
+              />
+            ))}
+            <BigFileRow key={`new-${settings.big_files.length}`} rule={{ kind: 'name', value: '' }} isNew onSave={r => changeBigFiles([...settings.big_files, r])} />
           </Section>
 
           <Section title="Backups when you save an edit">

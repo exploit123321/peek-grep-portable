@@ -7,6 +7,7 @@ correct when a USB drive gets a different drive letter.
 
 import json
 import os
+import re
 import string
 import threading
 from pathlib import Path
@@ -192,17 +193,42 @@ class SettingsStore:
             self.save()
         return policy
 
-    APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide")
+    APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide",
+                "freeze_rows", "freeze_columns")
+    # App settings that are text, not true/false
+    APP_TEXT_KEYS = ("freeze_rows", "freeze_columns")
 
-    def app_settings(self) -> Dict[str, bool]:
+    def app_settings(self) -> Dict[str, Any]:
         return {k: getattr(self, k) for k in self.APP_KEYS}
 
-    def set_app_settings(self, values: Dict[str, bool]) -> None:
+    def set_app_settings(self, values: Dict[str, Any]) -> None:
         with self._lock:
             for k, v in values.items():
-                if k in self.APP_KEYS:
+                if k in self.APP_TEXT_KEYS:
+                    v = normalize_freeze_rows(v) if k == "freeze_rows" else normalize_freeze_columns(v)
+                    if v:
+                        self._data[k] = v
+                    else:
+                        self._data.pop(k, None)
+                elif k in self.APP_KEYS:
                     self._data[k] = bool(v)
             self.save()
+
+    @property
+    def freeze_columns(self) -> str:
+        """Table columns kept at the left of Excel and CSV views, like "A" or "A-B, E" (empty: none)."""
+        try:
+            return normalize_freeze_columns(self._data.get("freeze_columns", ""))
+        except ValueError:
+            return ""
+
+    @property
+    def freeze_rows(self) -> str:
+        """Table rows kept at the top of Excel and CSV views, like "1" or "1-3, 7" (empty: none)."""
+        try:
+            return normalize_freeze_rows(self._data.get("freeze_rows", ""))
+        except ValueError:
+            return ""
 
     @property
     def open_on_mouse_monitor(self) -> bool:
@@ -213,6 +239,26 @@ class SettingsStore:
     def release_window_on_hide(self) -> bool:
         """Close the WebView while the app is in the tray (saves about 190 MB; reopening takes about 1 s)."""
         return bool(self._data.get("release_window_on_hide", True))
+
+    @property
+    def big_files(self) -> List[Dict[str, str]]:
+        """Large files rules: types, name parts and files read with larger limits ("big_files")."""
+        from app.big_files import normalize_rules
+        try:
+            return normalize_rules(self._data.get("big_files", []))
+        except ValueError:
+            return []
+
+    def set_big_files(self, rules: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        from app.big_files import normalize_rules
+        cleaned = normalize_rules(rules)
+        with self._lock:
+            if cleaned:
+                self._data["big_files"] = cleaned
+            else:
+                self._data.pop("big_files", None)
+            self.save()
+        return cleaned
 
     def folders(self) -> List[str]:
         with self._lock:
@@ -244,6 +290,96 @@ class SettingsStore:
             if is_within(path, folder):
                 return folder
         return None
+
+
+MAX_FROZEN_ROWS = 100
+MAX_ROW_NUMBER = 1_048_576  # The last row of an Excel sheet
+
+
+def normalize_freeze_rows(spec: Any) -> str:
+    """Row numbers and ranges ("1, 3, 5-7"; commas or spaces between them) in a short, sorted
+    form ("1, 3, 5-7"). Empty means no frozen rows. ValueError for anything else."""
+    if not isinstance(spec, str):
+        raise ValueError("Frozen rows must be text, like 1-3, 7.")
+    rows = set()
+    for part in re.split(r"[,;\s]+", spec.strip().replace("–", "-")):
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
+        if not m:
+            raise ValueError(f"Not a row number or range: {part}. Use for example 1-3, 7.")
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        if a > b:
+            a, b = b, a
+        if a < 1 or b > MAX_ROW_NUMBER:
+            raise ValueError(f"Row numbers go from 1 to {MAX_ROW_NUMBER:,}: {part}.")
+        if b - a + 1 > MAX_FROZEN_ROWS or len(rows) + (b - a + 1) > MAX_FROZEN_ROWS * 2:
+            raise ValueError(f"At most {MAX_FROZEN_ROWS} frozen rows.")
+        rows.update(range(a, b + 1))
+    if len(rows) > MAX_FROZEN_ROWS:
+        raise ValueError(f"At most {MAX_FROZEN_ROWS} frozen rows.")
+    parts: List[str] = []
+    for n in sorted(rows):
+        if parts and n == last + 1:
+            start = parts[-1].split("-")[0]
+            parts[-1] = f"{start}-{n}"
+        else:
+            parts.append(str(n))
+        last = n
+    return ", ".join(parts)
+
+
+MAX_FROZEN_COLUMNS = 50
+MAX_COLUMN_NUMBER = 16_384  # The last column of an Excel sheet (XFD)
+
+
+def _column_number(ref: str) -> int:
+    """ "C" or "3" -> 3."""
+    if ref.isdigit():
+        return int(ref)
+    n = 0
+    for ch in ref.upper():
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+def _column_letters(n: int) -> str:
+    s = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def normalize_freeze_columns(spec: Any) -> str:
+    """Columns as letters or numbers ("A, C-E" or "1, 3-5"; commas or spaces between them) in a
+    short, sorted form with letters ("A, C-E"). Empty means none. ValueError for anything else."""
+    if not isinstance(spec, str):
+        raise ValueError("Frozen columns must be text, like A-B, E.")
+    cols = set()
+    for part in re.split(r"[,;\s]+", spec.strip().replace("–", "-")):
+        if not part:
+            continue
+        m = re.fullmatch(r"([A-Za-z]{1,3}|\d+)(?:-([A-Za-z]{1,3}|\d+))?", part)
+        if not m:
+            raise ValueError(f"Not a column or range: {part}. Use for example A-B, E (or 1-2, 5).")
+        a, b = _column_number(m.group(1)), _column_number(m.group(2) or m.group(1))
+        if a > b:
+            a, b = b, a
+        if a < 1 or b > MAX_COLUMN_NUMBER:
+            raise ValueError(f"Columns go from A to XFD (1 to {MAX_COLUMN_NUMBER:,}): {part}.")
+        if b - a + 1 > MAX_FROZEN_COLUMNS or len(cols) + (b - a + 1) > MAX_FROZEN_COLUMNS:
+            raise ValueError(f"At most {MAX_FROZEN_COLUMNS} frozen columns.")
+        cols.update(range(a, b + 1))
+    parts: List[str] = []
+    last = 0
+    for n in sorted(cols):
+        if parts and n == last + 1:
+            parts[-1] = f"{parts[-1].split('-')[0]}-{_column_letters(n)}"
+        else:
+            parts.append(_column_letters(n))
+        last = n
+    return ", ".join(parts)
 
 
 def merge_folders(folders: List[str]) -> List[str]:

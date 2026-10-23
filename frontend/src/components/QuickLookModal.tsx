@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, Search, X } from 'lucide-react';
 import { api, Delimiter, EditModel, PreviewPayload, SearchItem } from '../api';
 import { CsvEditor, DocumentEditor, TextEditor, WorkbookEditor } from './editors/Editors';
@@ -14,10 +14,12 @@ import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/Offi
 import { fileKind, formatBytes, formatDate } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs } from '../utils/paths';
 import { clearHits, findHits, paintHits, revealRange } from '../utils/searchHits';
-import { HighlightTerm, parseFindText, plainSearchText } from '../utils/query';
+import { HighlightTerm, parseFindText } from '../utils/query';
 import { DEFAULT_SEARCH_OPTIONS, SearchOptions } from '../utils/searchOptions';
 import { ACTIONS, bindingParts, eventToBinding, Keymap, matches } from '../utils/keymap';
-import { HitReport, HitsContext, JumpContext } from './VirtualGrid';
+import { AnchorContext, FreezeContext, GridAnchor, HitReport, HitsContext, JumpContext } from './VirtualGrid';
+import { FreezeControl } from './FreezeControl';
+import { FileFreeze, fileFreeze, parseFreeze, setFileFreeze } from '../utils/freeze';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
 // Quick Look grows out of the selected row and sharpens from a blur (matrix ref R03 Blur Reveal).
@@ -87,12 +89,61 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     };
   }, [editing]);
 
+  // Preview <-> editor: the other view opens where this one was (tables: the row, column and
+  // sheet; text: the same part of the file)
+  const anchorRef = useRef<GridAnchor | null>(null);
+  const [sheet, setSheet] = useState(0);
+  const scrollRatio = useRef<number | null>(null);
+  useEffect(() => {
+    anchorRef.current = null;
+    setSheet(0);
+  }, [item?.path]);
+  const mainScroller = (): HTMLElement | null => {
+    let best: HTMLElement | null = null;
+    bodyRef.current?.querySelectorAll<HTMLElement>('*').forEach(el => {
+      if (el.scrollHeight - el.clientHeight > 4 && /(auto|scroll)/.test(getComputedStyle(el).overflowY)
+        && (!best || el.scrollHeight > best.scrollHeight)) best = el;
+    });
+    return best;
+  };
+  const keepPlace = () => {
+    if (anchorRef.current) anchorRef.current.restore = true;
+    const el = mainScroller();
+    scrollRatio.current = el ? el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight) : null;
+  };
+
+  // Text views: the same part of the file (tables restore themselves from the anchor)
+  const gridShown = editModel ? editModel.kind === 'csv' || editModel.kind === 'workbook' : current?.preview_type === 'table' || current?.preview_type === 'workbook';
+  useEffect(() => {
+    const ratio = scrollRatio.current;
+    if (ratio === null) return;
+    if (gridShown) {
+      scrollRatio.current = null;
+      return;
+    }
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        const el = mainScroller();
+        if (el) el.scrollTop = ratio * (el.scrollHeight - el.clientHeight);
+      });
+    });
+    // A saved file is shown again a moment later (and not moved to its first hit meanwhile)
+    const timer = window.setTimeout(() => {
+      scrollRatio.current = null;
+    }, 1500);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [editing, current]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startEdit = async () => {
     if (!item) return;
     try {
       const model = await api.editLoad(item.path);
       payloadRef.current = {};
       setDirty(false);
+      keepPlace();
       setEditModel(model);
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -101,6 +152,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   const leaveEdit = (force = false) => {
     if (!force && dirty && !window.confirm('Discard your changes?')) return false;
+    keepPlace();
     setEditModel(null);
     setDirty(false);
     return true;
@@ -113,6 +165,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       const res = await api.editSave(item.path, editModel.mtime_ns, payloadRef.current);
       const kept = res.backup_kept ? backupTime(res.backup_kept) : '';
       toast(res.backup ? 'Saved. The old version is in data\\backups.' : kept ? `Saved. Backup from ${kept} kept.` : 'Saved.');
+      keepPlace();
       setEditModel(null);
       setDirty(false);
       setReload(r => r + 1);
@@ -135,7 +188,9 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       if (matches(e, keymap.save_edit)) {
         e.preventDefault();
         saveEdit();
-      } else if ((e.key === 'Escape' || matches(e, keymap.close_preview)) && !(e.target as HTMLElement).closest('td')) {
+      } else if ((e.key === 'Escape' || matches(e, keymap.close_preview)) && !(e.target as HTMLElement).closest('td')
+        // Esc in the find box (or another field of the header) closes that, not the editor
+        && (e.target as HTMLElement).tagName !== 'INPUT') {
         e.preventDefault();
         leaveEdit();
       }
@@ -244,9 +299,20 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const [hitIndex, setHitIndex] = useState(0);
   const hitIndexRef = useRef(0);
   hitIndexRef.current = hitIndex;
-  // Table views report their hits from the data (they draw only the visible rows)
+  // Frozen rows and columns: this file's own, else the settings
+  const globalFreeze = useContext(FreezeContext);
+  const [ownFreeze, setOwnFreeze] = useState<FileFreeze | null>(null);
+  useEffect(() => setOwnFreeze(item ? fileFreeze(item.path) : null), [item?.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const freeze = useMemo(() => (ownFreeze ? parseFreeze(ownFreeze.rows, ownFreeze.cols) : globalFreeze), [ownFreeze, globalFreeze]);
+  const changeFreeze = (value: FileFreeze | null) => {
+    if (item) setFileFreeze(item.path, value);
+    setOwnFreeze(value);
+  };
+  const isGrid = data?.preview_type === 'table' || data?.preview_type === 'workbook';
+
+  // Table and PDF views report their hits from the data (they draw only the visible rows or pages)
   const [tableHits, setTableHits] = useState<HitReport | null>(null);
-  const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook';
+  const isTableView = data?.preview_type === 'table' || data?.preview_type === 'workbook' || data?.preview_type === 'pdf';
 
   useEffect(() => {
     const root = bodyRef.current;
@@ -262,7 +328,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       setHits(found);
       setHitIndex(0);
       paintHits(found, 0);
-      if (found.length && firstRun && jumpFirst) revealRange(found[0]);
+      if (found.length && firstRun && jumpFirst && scrollRatio.current === null) revealRange(found[0]);
       firstRun = firstRun && !found.length;
     };
     // Views that render later (sheet tabs, chapters, large code) change the DOM: scan again
@@ -295,7 +361,6 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   };
 
   useEffect(() => {
-    if (editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (matches(e, keymap.find_in_preview)) {
         e.preventDefault();
@@ -305,6 +370,8 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         e.preventDefault();
         e.stopPropagation();
         goHit(matches(e, keymap.prev_hit) ? -1 : 1);
+      } else if (editing) {
+        // While editing, letters are for the editor: no type to find
       } else if (matches(e, keymap.edit_file) && current?.editable && document.activeElement !== findRef.current) {
         e.preventDefault();
         e.stopPropagation();
@@ -341,13 +408,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     if (editModel) {
       switch (editModel.kind) {
         case 'text':
-          return <TextEditor model={editModel} {...editorProps} />;
+          return <TextEditor model={editModel} terms={activeTerms} {...editorProps} />;
         case 'csv':
-          return <CsvEditor model={editModel} {...editorProps} />;
+          return <CsvEditor model={editModel} terms={activeTerms} {...editorProps} />;
         case 'workbook':
-          return <WorkbookEditor model={editModel} {...editorProps} />;
+          return <WorkbookEditor model={editModel} terms={activeTerms} sheet={sheet} onSheet={setSheet} {...editorProps} />;
         case 'document':
-          return <DocumentEditor model={editModel} {...editorProps} />;
+          return <DocumentEditor model={editModel} terms={activeTerms} {...editorProps} />;
       }
     }
     if (error) {
@@ -375,13 +442,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'image':
         return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
       case 'pdf':
-        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} search={plainSearchText(activeTerms)} /> : null;
+        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} terms={activeTerms} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
       case 'document':
         return <DocumentPreview html={current.document_html || ''} />;
       case 'workbook':
-        return <WorkbookPreview sheets={current.sheets || []} terms={activeTerms} />;
+        return <WorkbookPreview sheets={current.sheets || []} terms={activeTerms} sheet={sheet} onSheet={setSheet} />;
       case 'slides':
         return <SlidesPreview slides={current.slides || []} />;
       case 'plain':
@@ -429,12 +496,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
               ))}
             </span>
           </div>
-          {!editing && !findOpen && (
+          {isGrid && <FreezeControl global={globalFreeze} own={ownFreeze} onChange={changeFreeze} />}
+          {!findOpen && (
             <button type="button" className="icon-btn" onClick={openFind} title={`Find in the preview (${keymap.find_in_preview.join(', ') || 'no key'})`}>
               <Search className="w-4 h-4" />
             </button>
           )}
-          {(tableHits ? tableHits.count : hits.length) > 0 && !editing && !findOpen && (
+          {(tableHits ? tableHits.count : hits.length) > 0 && !findOpen && (
             <span className="flex items-center h-7 rounded-lg text-[11.5px] text-fg-2" style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }} title="Search hits in this file (F3, Shift+F3)">
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title="Previous hit (Shift+F3)">
                 <ChevronLeft className="w-3.5 h-3.5" />
@@ -487,11 +555,13 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           </button>
         </div>
 
+        <AnchorContext.Provider value={anchorRef}>
+        <FreezeContext.Provider value={freeze}>
         <JumpContext.Provider value={jumpFirst}>
         <HitsContext.Provider value={setTableHits}>
         <div className="relative flex-1 min-h-0" style={{ background: 'var(--bg)' }}>
           {loading && current && <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden loading-line z-10" />}
-          {findOpen && !editing && (
+          {findOpen && (
             <div
               className="absolute top-2 right-4 z-20 flex items-center gap-1 h-9 pl-2.5 pr-1 rounded-xl fade-up"
               style={{
@@ -533,7 +603,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 {findText.trim()
                   ? (tableHits ? tableHits.count : hits.length) > 0
                     ? tableHits ? `${tableHits.index + 1}/${tableHits.count.toLocaleString()}` : `${hitIndex + 1}/${hits.length.toLocaleString()}`
-                    : current?.preview_type === 'pdf' ? 'in PDF' : 'no hits'
+                    : 'no hits'
                   : ''}
               </span>
               <button type="button" className="icon-btn !w-6 !h-6" onClick={() => goHit(-1)} title={`Previous hit (Shift+Enter, ${keymap.prev_hit.join(', ')})`}>
@@ -553,6 +623,8 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         </div>
         </HitsContext.Provider>
         </JumpContext.Provider>
+        </FreezeContext.Provider>
+        </AnchorContext.Provider>
 
         <div className="flex items-center justify-between gap-3 h-9 px-4 shrink-0 text-[11.5px] text-fg-3" style={{ borderTop: '1px solid var(--line)' }}>
           <div className="flex items-center gap-3 num">
