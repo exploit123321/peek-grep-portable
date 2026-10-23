@@ -44,3 +44,17 @@ def test_refused_entry_keeps_the_setting():
 def test_without_desktop_window():
     res = client.put("/api/settings/app", json={"start_with_windows": True})
     assert res.status_code == 400 and settings_store.start_with_windows is False
+
+
+def test_freeze_rows():
+    try:
+        res = client.put("/api/settings/app", json={"freeze_rows": " 7 , 1-3 2;9-8 "})
+        assert res.status_code == 200 and res.json()["app"]["freeze_rows"] == "1-3, 7-9"
+        assert client.put("/api/settings/app", json={"freeze_rows": "a-b"}).status_code == 400
+        assert client.put("/api/settings/app", json={"freeze_rows": "0"}).status_code == 400
+        assert client.put("/api/settings/app", json={"freeze_rows": "1-500"}).status_code == 400
+        assert client.put("/api/settings/app", json={"freeze_rows": 3}).status_code == 400
+        assert settings_store.freeze_rows == "1-3, 7-9"
+        assert client.put("/api/settings/app", json={"freeze_rows": ""}).json()["app"]["freeze_rows"] == ""
+    finally:
+        client.put("/api/settings/app", json={"freeze_rows": ""})

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Delimiter } from '../../api';
 import { HighlightTerm } from '../../utils/query';
@@ -44,6 +44,7 @@ export const TablePreview: React.FC<TablePreviewProps> = ({ tableData, delimiter
     return q ? all.filter(x => x.r.some(c => c.toLowerCase().includes(q))) : all;
   }, [tableData, filter]);
   const dataRows = tableData.total_rows - 1;
+  const rowNumber = useCallback((i: number) => rows[i]?.n ?? i + 1, [rows]);
 
   return (
     <div className="flex flex-col h-full">
@@ -70,7 +71,7 @@ export const TablePreview: React.FC<TablePreviewProps> = ({ tableData, delimiter
         </div>
       </div>
       <div className="flex-1 min-h-0">
-        <VirtualGrid columns={columns} rows={rows.map(x => x.r)} rowLabel={i => rows[i]?.n} terms={terms} />
+        <VirtualGrid columns={columns} rows={rows.map(x => x.r)} rowLabel={i => rows[i]?.n} rowNumber={rowNumber} terms={terms} />
         {rows.length === 0 && <div className="py-10 text-center text-fg-3 text-[12.5px]">No rows match “{filter}”</div>}
       </div>
     </div>

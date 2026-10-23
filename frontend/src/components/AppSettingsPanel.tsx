@@ -4,7 +4,7 @@ import { api, AppOptions, AppSettings, BackupOptions, BackupsInfo } from '../api
 import { SegmentedControl } from './motion/SegmentedControl';
 import { NumberInput, Row, Section, Switch } from './SearchSettingsPanel';
 
-// App settings: start with Windows, how the window opens, backups when the editor saves, and
+// App settings: start with Windows, how the window opens, frozen table rows, backups when the editor saves, and
 // links to the other settings. Each change is saved at once (data\settings.json; the startup
 // entry is in the Windows registry).
 
@@ -20,6 +20,29 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** Row numbers for frozen rows; saved on Enter or when the field loses focus. */
+const FreezeInput: React.FC<{ value: string; onSave: (v: string) => void }> = ({ value, onSave }) => {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const save = () => {
+    if (draft.trim() !== value) onSave(draft.trim());
+  };
+  return (
+    <input
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+      }}
+      placeholder="none"
+      spellCheck={false}
+      className="w-32 h-7 px-2 rounded-md num text-[12.5px] text-fg outline-none placeholder:text-fg-3"
+      style={{ background: 'var(--bg)', boxShadow: 'inset 0 0 0 1px var(--line-strong)' }}
+    />
+  );
+};
 
 interface AppSettingsPanelProps {
   settings: AppSettings;
@@ -132,6 +155,15 @@ export const AppSettingsPanel: React.FC<AppSettingsPanelProps> = ({ settings, on
               label="Free memory in the tray"
               hint="About 110 MB instead of 300 MB while hidden; the window opens again at once"
             />
+          </Section>
+
+          <Section title="Tables">
+            <Row
+              label="Freeze rows"
+              hint={<>These rows stay at the top in Excel and CSV views, under the column names. For example <span className="font-mono">1</span>, <span className="font-mono">1-3</span> or <span className="font-mono">1, 4, 6-8</span>. Empty: none.</>}
+            >
+              <FreezeInput value={o.freeze_rows} onSave={v => change({ freeze_rows: v })} />
+            </Row>
           </Section>
 
           <Section title="Backups when you save an edit">

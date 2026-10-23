@@ -87,6 +87,8 @@ export interface AppOptions {
   start_hidden: boolean;
   open_on_mouse_monitor: boolean;
   release_window_on_hide: boolean;
+  /** Table rows kept at the top, like "1" or "1-3, 7" (empty: none) */
+  freeze_rows: string;
 }
 
 export interface SearchParams {

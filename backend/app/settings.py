@@ -7,6 +7,7 @@ correct when a USB drive gets a different drive letter.
 
 import json
 import os
+import re
 import string
 import threading
 from pathlib import Path
@@ -192,17 +193,33 @@ class SettingsStore:
             self.save()
         return policy
 
-    APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide")
+    APP_KEYS = ("start_with_windows", "start_hidden", "open_on_mouse_monitor", "release_window_on_hide", "freeze_rows")
+    # App settings that are text, not true/false
+    APP_TEXT_KEYS = ("freeze_rows",)
 
-    def app_settings(self) -> Dict[str, bool]:
+    def app_settings(self) -> Dict[str, Any]:
         return {k: getattr(self, k) for k in self.APP_KEYS}
 
-    def set_app_settings(self, values: Dict[str, bool]) -> None:
+    def set_app_settings(self, values: Dict[str, Any]) -> None:
         with self._lock:
             for k, v in values.items():
-                if k in self.APP_KEYS:
+                if k == "freeze_rows":
+                    v = normalize_freeze_rows(v)
+                    if v:
+                        self._data[k] = v
+                    else:
+                        self._data.pop(k, None)
+                elif k in self.APP_KEYS:
                     self._data[k] = bool(v)
             self.save()
+
+    @property
+    def freeze_rows(self) -> str:
+        """Table rows kept at the top of Excel and CSV views, like "1" or "1-3, 7" (empty: none)."""
+        try:
+            return normalize_freeze_rows(self._data.get("freeze_rows", ""))
+        except ValueError:
+            return ""
 
     @property
     def open_on_mouse_monitor(self) -> bool:
@@ -244,6 +261,43 @@ class SettingsStore:
             if is_within(path, folder):
                 return folder
         return None
+
+
+MAX_FROZEN_ROWS = 100
+MAX_ROW_NUMBER = 1_048_576  # The last row of an Excel sheet
+
+
+def normalize_freeze_rows(spec: Any) -> str:
+    """Row numbers and ranges ("1, 3, 5-7"; commas or spaces between them) in a short, sorted
+    form ("1, 3, 5-7"). Empty means no frozen rows. ValueError for anything else."""
+    if not isinstance(spec, str):
+        raise ValueError("Frozen rows must be text, like 1-3, 7.")
+    rows = set()
+    for part in re.split(r"[,;\s]+", spec.strip().replace("–", "-")):
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
+        if not m:
+            raise ValueError(f"Not a row number or range: {part}. Use for example 1-3, 7.")
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        if a > b:
+            a, b = b, a
+        if a < 1 or b > MAX_ROW_NUMBER:
+            raise ValueError(f"Row numbers go from 1 to {MAX_ROW_NUMBER:,}: {part}.")
+        if b - a + 1 > MAX_FROZEN_ROWS or len(rows) + (b - a + 1) > MAX_FROZEN_ROWS * 2:
+            raise ValueError(f"At most {MAX_FROZEN_ROWS} frozen rows.")
+        rows.update(range(a, b + 1))
+    if len(rows) > MAX_FROZEN_ROWS:
+        raise ValueError(f"At most {MAX_FROZEN_ROWS} frozen rows.")
+    parts: List[str] = []
+    for n in sorted(rows):
+        if parts and n == last + 1:
+            start = parts[-1].split("-")[0]
+            parts[-1] = f"{start}-{n}"
+        else:
+            parts.append(str(n))
+        last = n
+    return ", ".join(parts)
 
 
 def merge_folders(folders: List[str]) -> List[str]:

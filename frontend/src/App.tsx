@@ -5,6 +5,7 @@ import { TitleBar } from './components/TitleBar';
 import { CommandBar } from './components/CommandBar';
 import { ResultsList, Row } from './components/ResultsList';
 import { KeyHint, QuickLookModal } from './components/QuickLookModal';
+import { FreezeContext, parseFrozenRows } from './components/VirtualGrid';
 import { Onboarding } from './components/Onboarding';
 import { FoldersPanel } from './components/FoldersPanel';
 import { ListEditor } from './components/ListEditor';
@@ -79,6 +80,7 @@ function Workspace() {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const frozenRows = useMemo(() => parseFrozenRows(settings?.app.freeze_rows ?? ''), [settings?.app.freeze_rows]);
   const [keymap, setKeymap] = useState<Keymap>(DEFAULT_KEYMAP);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [searchSettingsOpen, setSearchSettingsOpen] = useState(false);
@@ -675,6 +677,7 @@ function Workspace() {
   })();
 
   return (
+    <FreezeContext.Provider value={frozenRows}>
     <div className="relative flex flex-col h-full overflow-hidden" style={{ background: 'radial-gradient(1200px 500px at 50% -220px, rgba(124,156,255,0.07), transparent 70%), var(--bg)' }}>
       <TitleBar
         status={status}
@@ -943,6 +946,7 @@ function Workspace() {
         </svg>
       </div>
     </div>
+    </FreezeContext.Provider>
   );
 }
 

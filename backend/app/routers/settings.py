@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.indexer.smart_search import clear_cache
 from app.search_options import DEFAULTS, PRESET_LABELS, PRESETS, validate
-from app.settings import DEFAULT_HOTKEY
+from app.settings import DEFAULT_HOTKEY, normalize_freeze_rows
 from app.state import desktop_hooks, settings_store
 
 router = APIRouter(prefix="/api", tags=["settings"])
@@ -113,11 +113,18 @@ async def save_backup_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.put("/settings/app")
 async def save_app_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Start with Windows, start in the tray, the screen to open on, and freeing memory in the tray."""
+    """Start with Windows, start in the tray, the screen to open on, freeing memory in the tray,
+    and the frozen table rows."""
     keys = settings_store.APP_KEYS
-    bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, bool)]
+    text = settings_store.APP_TEXT_KEYS
+    bad = [k for k, v in payload.items() if k not in keys or not isinstance(v, str if k in text else bool)]
     if bad:
         raise HTTPException(status_code=400, detail=f"Unknown or not true/false: {', '.join(bad)}.")
+    if "freeze_rows" in payload:
+        try:
+            normalize_freeze_rows(payload["freeze_rows"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     before = settings_store.app_settings()
     after = {**before, **payload}
     if (after["start_with_windows"], after["start_hidden"]) != (before["start_with_windows"], before["start_hidden"]):
