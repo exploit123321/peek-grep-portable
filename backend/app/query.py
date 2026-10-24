@@ -433,9 +433,9 @@ def _plain_element(query: str, opts: SearchOptions) -> Element:
     return el
 
 
-def _is_param(segment: str, date_order: str) -> bool:
+def _is_param(segment: str, date_order: str, and_char: str = "+") -> bool:
     try:
-        parse_param(segment, date_order)
+        parse_param(segment, date_order, and_char=and_char)
         return True
     except ValueError:
         return False
@@ -446,8 +446,8 @@ def parse_query(query: str, opts: SearchOptions = DEFAULTS) -> QueryPlan:
     if not opts.enabled:
         return QueryPlan(raw=query or "", grouped=False, elements=[_plain_element(query or "", opts)])
     text, segments = split_params(query or "", opts.param_char, opts.quotes, opts.group_open, opts.group_close,
-                                  opts.text_char, opts.and_char, lambda seg: _is_param(seg, opts.date_order))
-    params, errors = parse_params(segments, opts.date_order)
+                                  opts.text_char, opts.and_char, lambda seg: _is_param(seg, opts.date_order, opts.and_char or "+"))
+    params, errors = parse_params(segments, opts.date_order, and_char=opts.and_char or "+")
     tokens, _, _, _ = _Scanner(text, opts).scan(0, False)
     grouped, combos = _expand(tokens, 60)
     elements = [_element(flat, label if grouped else None, opts) for flat, label in combos]

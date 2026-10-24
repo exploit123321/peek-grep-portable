@@ -292,3 +292,35 @@ def test_snippets_and_name_order(tmp_path):
 
 def names_in_order(res):
     return [r.filename for r in res["results"]]
+
+
+def test_folder_filters(tmp_path):
+    """;cd folder1 (only there, any depth), ;-cd folder1 (not there), + for several, whole names."""
+    clear_cache()
+    db_file = str(tmp_path / "folders.db")
+    init_db(db_file)
+    root = tmp_path / "D"
+    files = ["folder1/a.xlsx", "folder1/sub/e.xlsx", "folder 2/b.xlsx", "folder10/c.xlsx", "other/d.xlsx",
+             "other/folder1/f.xlsx", "folder1/g.txt"]
+    for i, rel in enumerate(files):
+        path = os.path.join(str(root), *rel.split("/"))
+        name = os.path.basename(path)
+        upsert_file(path=path, filename=name, extension=os.path.splitext(name)[1], size_bytes=10, mtime=1_700_000_000 + i,
+                    is_text=True, category="plain", content="annual report", db_path=db_file)
+
+    def found(q):
+        return names(run_search(q, db_path=db_file, limit=50))
+
+    assert found(".xlsx:report;cd folder1") == ["a.xlsx", "e.xlsx", "f.xlsx"]
+    assert found(".xlsx:report;-cd folder1") == ["b.xlsx", "c.xlsx", "d.xlsx"]
+    assert found(".xlsx:report;cd folder1+folder 2") == ["a.xlsx", "b.xlsx", "e.xlsx", "f.xlsx"]
+    assert found(".xlsx:report;-cd folder1+folder 2") == ["c.xlsx", "d.xlsx"]
+    # Wildcards, a chain of folders, a full path, filters before the text search, several filters
+    assert found(".xlsx;cd folder1*") == ["a.xlsx", "c.xlsx", "e.xlsx", "f.xlsx"]
+    assert found(".xlsx;cd other/folder1") == ["f.xlsx"]
+    assert found(f".xlsx;cd {root / 'folder1'}") == ["a.xlsx", "e.xlsx"]
+    assert found(".xlsx;cd folder1:report") == ["a.xlsx", "e.xlsx", "f.xlsx"]
+    assert found(".xlsx;cd folder1;-cd sub") == ["a.xlsx", "f.xlsx"]
+    # Case does not matter; a file name is not a folder
+    assert found(";cd FOLDER1;-cd other") == ["a.xlsx", "e.xlsx", "g.txt"]
+    assert found(";cd a.xlsx") == []

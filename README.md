@@ -51,10 +51,11 @@ rows, all sheets); the first 50 pages of a PDF. Files that match a rule in **Set
 files** (a file type like `.csv`, a part of the name like `big`, which also matches bigdata.xlsx,
 or one file by its full path) are read up to 200 MB and 100 million characters.
 
-### Filters: dates and size (after `;`)
+### Filters: dates, size, and folders (after `;`)
 
 Each `;` starts a filter; filters apply to every group. `dm` is the date modified, `dc` created,
-`da` accessed (`modified`, `created`, `accessed` work too), `size` the file size.
+`da` accessed (`modified`, `created`, `accessed` work too), `size` the file size, `cd` the folder
+(`folder` works too; `-cd` leaves the folder out).
 
 | Type | Finds |
 |---|---|
@@ -70,6 +71,11 @@ Each `;` starts a filter; filters apply to every group. `dm` is the date modifie
 | `;size from 1mb to 50mb`, `;size 1mb..50mb` | Size ranges, both ends included |
 | `;size=10mb` | About 10 MB (9.5 to 10.5 MB) |
 | `;size small` | Windows size names: empty, tiny, small, medium, large, huge, gigantic |
+| `;cd folder1` | Only files in a folder named folder1, at any depth (the whole name: not folder10; `cd folder*` for parts) |
+| `;-cd folder1` | Files that are not in a folder named folder1 |
+| `;cd folder1+folder 2`, `;-cd old+tmp` | In either folder; in neither (spaces in names are fine) |
+| `;cd projects\2024`, `;cd D:\work` | Folders one in the other; a full path (only below it) |
+| `.xlsx:report;cd folder1;-cd old` | Several filters: all must hold (in folder1, but not in an "old" folder) |
 | `.xlsx;size>150mb:product` | Filters can come before the text search: the same as `.xlsx:product;size>150mb` |
 
 Dates: `15-03-2024`, `15.03.2024`, `15/03/24`, `2024-03-15`, `20240315`, `15-03` (this year),
