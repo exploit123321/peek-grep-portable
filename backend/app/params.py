@@ -1,4 +1,4 @@
-"""Filters after ";" in the search field: dates and size.
+r"""Filters after ";" in the search field: dates, size, and folders.
 
     ;dm from 01-03-2024 to 31-03-2024   modified in March 2024 (both days included)
     ;dc from 2023                      created in 2023 or later
@@ -9,6 +9,10 @@
     ;size>10mb  ;size<=1.5 gb          sizes in b, kb, mb, gb, tb (1 kb = 1024 bytes)
     ;size from 1mb to 50mb             both ends included
     ;size small                        Windows size names: empty, tiny, small, medium, large, huge, gigantic
+    ;cd folder1                        only files in a folder named folder1 (any depth)
+    ;-cd folder1                       not in it
+    ;cd folder1+folder 2               in either; ;-cd a+b: in neither
+    ;cd projects\2024  ;cd D:\work      a chain of folders; a full path from its start
 
 Fields: dm (modified), dc (created), da (accessed), size; long names work too (modified,
 created, accessed). A date can be a day, a month, or a year: "from" takes its first moment,
@@ -17,7 +21,7 @@ created, accessed). A date can be a day, a month, or a year: "from" takes its fi
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
@@ -26,8 +30,9 @@ FIELDS = {
     "dc": "ctime", "created": "ctime", "made": "ctime",
     "da": "atime", "accessed": "atime", "opened": "atime",
     "size": "size", "sz": "size",
+    "cd": "folder", "folder": "folder", "dir": "folder",
 }
-FIELD_LABELS = {"mtime": "modified", "ctime": "created", "atime": "accessed", "size": "size"}
+FIELD_LABELS = {"mtime": "modified", "ctime": "created", "atime": "accessed", "size": "size", "folder": "in"}
 
 _UNITS = {
     "b": 1, "byte": 1, "bytes": 1,
@@ -73,10 +78,55 @@ class Value:
 
 @dataclass
 class Param:
-    field: str                    # mtime, ctime, atime, size
+    field: str                    # mtime, ctime, atime, size, folder
     low: Optional[float] = None   # included
     high: Optional[float] = None  # excluded
     label: str = ""
+    # folder: the file is in any of these folders (or, negated, in none of them)
+    folders: List["FolderMatch"] = field(default_factory=list)
+    negated: bool = False
+
+
+@dataclass
+class FolderMatch:
+    """One folder of ;cd: a SQL LIKE pattern for the path (ASCII names; fast), and the regex.
+    exact: the LIKE is enough; with wildcards it only narrows down, the regex decides (a * of
+    LIKE could also go over a separator)."""
+    like: Optional[str]
+    regex: str
+    text: str
+    exact: bool = False
+
+
+_SEP = r"[\\/]"
+
+
+def folder_match(text: str) -> FolderMatch:
+    """ "folder1": a folder with this whole name anywhere in the path; "a\\b": these folders one in
+    the other; "D:\\work" or "\\\\server\\share": the path starts so. * and ? work inside a name."""
+    from app.indexer.db import escape_like
+    raw = text.strip().strip('"')
+    absolute = bool(re.match(r"^([A-Za-z]:|[\\/])", raw))
+    drive = re.match(r"^[A-Za-z]:", raw)
+    names = [n for n in re.split(r"[\\/]+", raw[2:] if drive else raw) if n]
+    if not names and not drive:
+        raise ValueError(f"“{text}”: a folder name is missing")
+    piece = lambda n: "".join("[^\\\\/]*" if c == "*" else ("[^\\\\/]" if c == "?" else re.escape(c)) for c in n)  # noqa: E731
+    body = _SEP.join(piece(n) for n in names)
+    head = (re.escape(drive.group(0)) + _SEP if drive else _SEP) if absolute else _SEP
+    regex = "^" + head + body + (_SEP if names else "") if absolute else head + body + _SEP
+    like = None
+    plain = "".join(names)
+    if plain.isascii():
+        import os
+        to_like = lambda n: "".join("%" if c == "*" else ("_" if c == "?" else escape_like(c)) for c in n)  # noqa: E731
+        inner = os.sep.join(to_like(n) for n in names)
+        if absolute:
+            start = (drive.group(0) if drive else "") + os.sep
+            like = escape_like(start) + inner + (escape_like(os.sep) if names else "") + "%"
+        else:
+            like = "%" + escape_like(os.sep) + inner + escape_like(os.sep) + "%"
+    return FolderMatch(like=like, regex=regex, text=raw, exact=like is not None and not any(c in plain for c in "*?"))
 
 
 def _fold(text: str) -> str:
@@ -278,15 +328,19 @@ def _split_range(text: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def parse_param(segment: str, date_order: str = "dmy", now: Optional[datetime] = None) -> Param:
-    """One filter like "dm from 01-03-2024 to 31-03-2024" or "size>10mb". Raises ValueError."""
+def parse_param(segment: str, date_order: str = "dmy", now: Optional[datetime] = None, and_char: str = "+") -> Param:
+    """One filter like "dm from 01-03-2024 to 31-03-2024", "size>10mb" or "-cd old". Raises ValueError."""
     now = now or datetime.now()
     seg = segment.strip()
-    m = re.match(r"([A-Za-z]+)\s*[:]?\s*(.*)$", seg, re.S)
-    if not m or _fold(m.group(1)) not in FIELDS:
-        raise ValueError(f"“{seg}”: start with dm, dc, da, or size")
-    field = FIELDS[_fold(m.group(1))]
-    rest = m.group(2).strip()
+    m = re.match(r"(-?)\s*([A-Za-z]+)\s*[:]?\s*(.*)$", seg, re.S)
+    if not m or _fold(m.group(2)) not in FIELDS:
+        raise ValueError(f"“{seg}”: start with dm, dc, da, size, or cd")
+    field = FIELDS[_fold(m.group(2))]
+    rest = m.group(3).strip()
+    if field == "folder":
+        return _folder_param(seg, rest, bool(m.group(1)), and_char)
+    if m.group(1):
+        raise ValueError(f"“{seg}”: only cd can be left out with -")
     if not rest:
         raise ValueError(f"“{seg}”: a {'size' if field == 'size' else 'date'} is missing")
 
@@ -344,6 +398,16 @@ def parse_param(segment: str, date_order: str = "dmy", now: Optional[datetime] =
     return Param(field=field, low=low, high=high, label=size_label or _label(field, low, high, date_order))
 
 
+def _folder_param(seg: str, rest: str, negated: bool, and_char: str) -> Param:
+    parts = [p for p in (rest.split(and_char) if and_char else [rest])]
+    if not rest or any(not p.strip().strip('"') for p in parts):
+        raise ValueError(f"“{seg}”: a folder name is missing")
+    folders = [folder_match(p) for p in parts]
+    names = " or ".join(f.text for f in folders)
+    return Param(field="folder", folders=folders, negated=negated,
+                 label=f"not in {names.replace(' or ', ' nor ')}" if negated else f"in {names}")
+
+
 def _label(field: str, low: Optional[float], high: Optional[float], order: str) -> str:
     name = FIELD_LABELS[field]
     if field == "size":
@@ -362,7 +426,8 @@ def _label(field: str, low: Optional[float], high: Optional[float], order: str) 
     return f"{name} to {last(high)}"
 
 
-def parse_params(segments: List[str], date_order: str = "dmy", now: Optional[datetime] = None) -> Tuple[List[Param], List[str]]:
+def parse_params(segments: List[str], date_order: str = "dmy", now: Optional[datetime] = None,
+                 and_char: str = "+") -> Tuple[List[Param], List[str]]:
     """All filters; the ones that cannot be read come back as messages (and are left out)."""
     params: List[Param] = []
     errors: List[str] = []
@@ -370,7 +435,7 @@ def parse_params(segments: List[str], date_order: str = "dmy", now: Optional[dat
         if not seg.strip():
             continue
         try:
-            params.append(parse_param(seg, date_order, now))
+            params.append(parse_param(seg, date_order, now, and_char))
         except ValueError as e:
             errors.append(str(e))
     return params, errors
@@ -406,7 +471,9 @@ def _text_after_param(seg: str, text_char: str, is_param: Callable[[str], bool])
     """Where the text search starts in a filter part ("size>150:product" -> 8), or None."""
     pos = seg.find(text_char)
     while pos > 0:
-        if is_param(seg[:pos]):
+        # "cd D:\work": a drive letter, not the start of a text search
+        drive = text_char == ":" and seg[pos - 1].isalpha() and seg[pos + 1:pos + 2] in ("\\", "/")
+        if not drive and is_param(seg[:pos]):
             return pos
         pos = seg.find(text_char, pos + 1)
     return None

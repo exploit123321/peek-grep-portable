@@ -363,6 +363,22 @@ class _Search:
             params += el.exclude_exts
         # Filters after ";": dates and size (low included, high excluded)
         for param in self.params:
+            if param.field == "folder":
+                # In any of the folders (LIKE where it can: fast; else the regex), or in none of them
+                parts = []
+                for f in param.folders:
+                    if f.exact:
+                        parts.append("m.path LIKE ? ESCAPE '^'")
+                        params.append(f.like)
+                    elif f.like is not None:
+                        # The LIKE first: the regex (in Python) only for the paths it lets through
+                        parts.append("(m.path LIKE ? ESCAPE '^' AND pg_regexp(?, m.path))")
+                        params += [f.like, f.regex]
+                    else:
+                        parts.append("pg_regexp(?, m.path)")
+                        params.append(f.regex)
+                clause += f" AND {'NOT ' if param.negated else ''}({' OR '.join(parts)})"
+                continue
             column = {"mtime": "m.mtime", "ctime": "m.ctime", "atime": "m.atime", "size": "m.size_bytes"}[param.field]
             if param.low is not None:
                 clause += f" AND {column} >= ?"
