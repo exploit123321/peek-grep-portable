@@ -228,14 +228,18 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   useEffect(() => {
     if (!editing) return;
+    // The key stops here: React draws the preview before the app's own Esc (close Quick Look) would
+    // see it, and by then nothing says the editor had it
     const onKey = (e: KeyboardEvent) => {
       if (matches(e, keymap.save_edit)) {
         e.preventDefault();
+        e.stopPropagation();
         saveEdit();
       } else if ((e.key === 'Escape' || matches(e, keymap.close_preview)) && !(e.target as HTMLElement).closest('td')
         // Esc in the find box (or another field of the header) closes that, not the editor
         && (e.target as HTMLElement).tagName !== 'INPUT') {
         e.preventDefault();
+        e.stopPropagation();
         leaveEdit();
       }
     };
