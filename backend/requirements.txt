@@ -4,6 +4,7 @@ uvicorn>=0.29.0
 watchdog>=4.0.0
 pydantic>=2.6.0
 pillow>=10.2.0
+pillow-heif>=1.8.0
 pypdf>=4.0.0
 fonttools>=4.50.0
 python-multipart>=0.0.9

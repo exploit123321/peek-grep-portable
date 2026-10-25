@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, File, FileCode2, FileSpreadsheet, FileText, Image as ImageIcon, NotebookText, Presentation, Sheet } from 'lucide-react';
+import { BookOpen, File, FileCode2, FileSpreadsheet, FileText, Film, Image as ImageIcon, NotebookText, Presentation, Sheet } from 'lucide-react';
 import { FileKind, KIND_COLORS } from '../utils/formatters';
 
 const ICONS: Record<FileKind, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
@@ -7,6 +7,7 @@ const ICONS: Record<FileKind, React.ComponentType<{ className?: string; style?: 
   markdown: NotebookText,
   data: Sheet,
   media: ImageIcon,
+  video: Film,
   pdf: FileText,
   epub: BookOpen,
   word: FileText,

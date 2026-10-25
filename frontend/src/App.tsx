@@ -29,7 +29,7 @@ const CATEGORIES = [
   { id: 'code' as const, label: 'Code', icon: FileCode2, hint: 'Code' },
   { id: 'docs' as const, label: 'Docs', icon: FileText, hint: 'Word, PowerPoint, PDF, Markdown, EPUB, text' },
   { id: 'data' as const, label: 'Data', icon: Sheet, hint: 'Excel, CSV, TSV' },
-  { id: 'media' as const, label: 'Images', icon: ImageIcon, hint: 'Images' },
+  { id: 'media' as const, label: 'Media', icon: ImageIcon, hint: 'Photos and videos (also HEIC, MOV, and Snapchat files)' },
 ];
 
 /** One list of results: the whole search, or one group of [a, b]. */

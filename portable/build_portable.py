@@ -140,9 +140,14 @@ def copy_runtime(home: Path, venv: Path, target: Path) -> None:
         record = info / "RECORD"
         if not record.exists():
             continue
-        tops = {line.split(",")[0].split("/")[0].lower() for line in record.read_text(encoding="utf-8").splitlines() if line}
+        files = [line.split(",")[0] for line in record.read_text(encoding="utf-8").splitlines() if line]
+        tops = {f.split("/")[0].lower() for f in files}
         if tops & wanted:
             shutil.copytree(info, site_dst / info.name)
+            # Files of the package outside its folder (pillow-heif: its DLLs and _pillow_heif.pyd)
+            for f in files:
+                if "/" not in f and not (site_dst / f).exists() and (site_src / f).is_file():
+                    shutil.copy2(site_src / f, site_dst / f)
     log(f"Packages: {', '.join(sorted(copied))}")
 
     # Isolated path list next to python3XX.dll: ignores PYTHONPATH, PYTHONHOME, the registry,
@@ -174,6 +179,8 @@ import os, sys, socket, tempfile, threading, time, urllib.request
 os.environ['PEEK_GREP_DATA'] = tempfile.mkdtemp(prefix='peekgrep-smoke-')
 sys.path[:0] = [r'{app_dir}', r'{app_dir / "backend"}']
 import desktop_app, uvicorn, webview.platforms.winforms, uvicorn.loops.auto, uvicorn.protocols.http.auto
+import app.media
+assert app.media.HEIF_AVAILABLE, "HEIC photos: pillow-heif (libheif) did not load"
 s = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(8); port = s.getsockname()[1]
 srv = uvicorn.Server(uvicorn.Config(desktop_app.app, log_level='warning'))
 threading.Thread(target=srv.run, kwargs={{'sockets': [s]}}, daemon=True).start()
@@ -233,12 +240,14 @@ def compile_launcher(out_exe: Path, payload: Path = None, version: str = "") -> 
 
 
 def zip_folder(folder: Path, out_zip: Path) -> None:
-    """Zip the runtime and app folders and README.txt. The .pyc caches stay out: Python writes them on the first start."""
+    """Zip the runtime and app folders, README.txt, and the third-party notices, licences, and sources.
+    The .pyc caches stay out: Python writes them on the first start."""
     log("Packing payload zip")
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in sorted(folder.rglob("*")):
             rel = path.relative_to(folder).as_posix()
-            if rel.split("/")[0] not in ("runtime", "app", "README.txt") or "__pycache__" in rel.split("/"):
+            if rel.split("/")[0] not in ("runtime", "app", "README.txt", "LICENSE.txt", "THIRD_PARTY_NOTICES.md", "third_party") \
+                    or "__pycache__" in rel.split("/"):
                 continue
             if path.is_file():
                 zf.write(path, rel)
@@ -269,6 +278,10 @@ def main() -> None:
         copy_vendor_runtime(folder / "runtime")
     copy_app(folder / "app")
     shutil.copy2(HERE / "README.txt", folder / "README.txt")
+    # Licences of the bundled software, and the source of its GPL and LGPL parts (they go wherever the app goes)
+    shutil.copy2(PROJECT / "LICENSE", folder / "LICENSE.txt")
+    shutil.copy2(PROJECT / "THIRD_PARTY_NOTICES.md", folder / "THIRD_PARTY_NOTICES.md")
+    shutil.copytree(PROJECT / "third_party", folder / "third_party")
     precompile(folder)
     smoke_test(folder)
 

@@ -30,7 +30,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'category_2', label: 'Type: Code', section: 'Search', context: 'results', defaults: ['Ctrl+2'] },
   { id: 'category_3', label: 'Type: Docs', section: 'Search', context: 'results', defaults: ['Ctrl+3'] },
   { id: 'category_4', label: 'Type: Data', section: 'Search', context: 'results', defaults: ['Ctrl+4'] },
-  { id: 'category_5', label: 'Type: Images', section: 'Search', context: 'results', defaults: ['Ctrl+5'] },
+  { id: 'category_5', label: 'Type: Media', section: 'Search', context: 'results', defaults: ['Ctrl+5'] },
 
   { id: 'move_down', label: 'Next result', section: 'Results', context: 'both', defaults: ['ArrowDown'] },
   { id: 'move_up', label: 'Previous result', section: 'Results', context: 'both', defaults: ['ArrowUp'] },

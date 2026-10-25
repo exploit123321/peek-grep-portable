@@ -200,6 +200,11 @@ def build_file_record(
             return None
 
         category = get_file_category(ext)
+        if not ext or ext in (".unknown", ".media"):
+            # Snapchat exports have photos and videos without (or with an odd) extension: the first bytes tell
+            from app.media import MEDIA_EXTENSIONS, sniff
+            if size and sniff(norm_path) in MEDIA_EXTENSIONS:
+                category = "media"
         is_text = is_text_file(norm_path, ext, probe_bytes=False)
 
         content: Optional[str] = None

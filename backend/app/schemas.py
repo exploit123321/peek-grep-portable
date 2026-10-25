@@ -61,6 +61,19 @@ class ImagePreviewMeta(BaseModel):
     format: str
     mode: str
     aspect_ratio: str
+    taken: Optional[str] = None   # "2024-05-01 14:03" (EXIF)
+    camera: Optional[str] = None  # "Apple iPhone 15 Pro"
+
+class VideoPreviewMeta(BaseModel):
+    duration: Optional[float] = None  # seconds
+    width: Optional[int] = None       # as shown (after the rotation)
+    height: Optional[int] = None
+    rotation: int = 0
+    codec: Optional[str] = None       # "hvc1", "avc1", ...
+    codec_name: Optional[str] = None  # "HEVC (H.265)"
+    audio: bool = False
+    created: Optional[str] = None
+    camera: Optional[str] = None
 
 class SheetData(BaseModel):
     name: str
@@ -99,7 +112,7 @@ class PreviewResponse(BaseModel):
     extension: str
     size_bytes: int
     mtime: float
-    preview_type: str  # code, markdown, table, image, plain, binary, pdf, epub, document, workbook, slides
+    preview_type: str  # code, markdown, table, image, video, plain, binary, pdf, epub, document, workbook, slides
     content: Optional[str] = None
     language: Optional[str] = None
     table_data: Optional[TablePreviewData] = None
@@ -109,6 +122,13 @@ class PreviewResponse(BaseModel):
     sheets: Optional[List[SheetData]] = None
     slides: Optional[List[SlideData]] = None
     raw_url: Optional[str] = None
+    # Photos the WebView cannot show (HEIC): a JPEG made for the preview
+    display_url: Optional[str] = None
+    video_meta: Optional[VideoPreviewMeta] = None
+    # The type a video is served as ("video/mp4"); None: a container the WebView cannot play (AVI, WMV)
+    media_mime: Optional[str] = None
+    # Snapchat memory: its text and stickers, drawn over the photo or video
+    overlay_url: Optional[str] = None
     truncated: bool = False
     editable: Optional[str] = None  # text, csv, workbook, document (None: not editable)
 

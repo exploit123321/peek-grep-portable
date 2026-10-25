@@ -275,13 +275,35 @@ export const api = {
   },
 };
 
+export interface ImageMeta {
+  width: number;
+  height: number;
+  format: string;
+  mode: string;
+  aspect_ratio: string;
+  taken?: string | null;
+  camera?: string | null;
+}
+
+export interface VideoMeta {
+  duration?: number | null;
+  width?: number | null;
+  height?: number | null;
+  rotation: number;
+  codec?: string | null;
+  codec_name?: string | null;
+  audio: boolean;
+  created?: string | null;
+  camera?: string | null;
+}
+
 export interface PreviewPayload {
   path: string;
   filename: string;
   extension: string;
   size_bytes: number;
   mtime: number;
-  preview_type: 'code' | 'markdown' | 'table' | 'image' | 'plain' | 'binary' | 'pdf' | 'epub' | 'document' | 'workbook' | 'slides';
+  preview_type: 'code' | 'markdown' | 'table' | 'image' | 'video' | 'plain' | 'binary' | 'pdf' | 'epub' | 'document' | 'workbook' | 'slides';
   content?: string;
   language?: string;
   truncated?: boolean;
@@ -293,7 +315,14 @@ export interface PreviewPayload {
     delimiter: Exclude<Delimiter, 'auto'>;
     detected: boolean;
   };
-  image_meta?: { width: number; height: number; format: string; mode: string; aspect_ratio: string };
+  image_meta?: ImageMeta;
+  video_meta?: VideoMeta | null;
+  /** Photos the WebView cannot show (HEIC): a JPEG made for the preview */
+  display_url?: string | null;
+  /** Snapchat memory: its text and stickers, drawn over the photo or video */
+  overlay_url?: string | null;
+  /** The type a video is served as; null: the WebView cannot play the container */
+  media_mime?: string | null;
   epub_data?: {
     title?: string | null;
     author?: string | null;
