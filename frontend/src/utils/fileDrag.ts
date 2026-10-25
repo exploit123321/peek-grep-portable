@@ -18,11 +18,25 @@ let dragging = false;
 // The press that may become a drag. Here, not in the component: the list draws itself anew
 // while the mouse moves (a closure would forget the press).
 let start: { x: number; y: number; target: EventTarget } | null = null;
+// The browser fallback's drag (a link to the file, not a file)
+let linkDrag = false;
+
+// A file let go over the app itself (a drag out that ends inside the window, or one from Explorer)
+// would make the WebView open that file. The window is no place to drop: the cursor says so and
+// letting go does nothing; only another app gets the file. Text dragged into a field still drops.
+const refuseDrop = (e: DragEvent) => {
+  if (!linkDrag && !e.dataTransfer?.types.includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer!.dropEffect = 'none';
+};
+if (typeof window !== 'undefined') {
+  for (const type of ['dragenter', 'dragover', 'drop'] as const) window.addEventListener(type, refuseDrop);
+}
 
 export function fileDragProps(source: () => DragSource | null) {
   const native = !!desktop()?.drag_files;
 
-  const props: Pick<React.HTMLAttributes<HTMLElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp' | 'onDragStart'> & {
+  const props: Pick<React.HTMLAttributes<HTMLElement>, 'onPointerDown' | 'onPointerMove' | 'onPointerUp' | 'onDragStart' | 'onDragEnd'> & {
     draggable?: boolean;
   } = {
     onPointerDown: e => {
@@ -52,6 +66,10 @@ export function fileDragProps(source: () => DragSource | null) {
       e.dataTransfer.setData('DownloadURL', `application/octet-stream:${src.filename}:${url}`);
       e.dataTransfer.setData('text/uri-list', url);
       e.dataTransfer.effectAllowed = 'copy';
+      linkDrag = true;
+    };
+    props.onDragEnd = () => {
+      linkDrag = false;
     };
   }
   return props;
