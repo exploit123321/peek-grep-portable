@@ -17,7 +17,7 @@ Space           Quick Look preview (Up / Down to go to the next file)
 Enter           Open the file
 Ctrl+Enter      Show the file in Explorer
 Ctrl+C          Copy the file path
-Ctrl+1 to 5     Filter: All, Code, Docs, Data, Images
+Ctrl+1 to 5     Filter: All, Code, Docs, Data, Media
 Backspace       In an empty search field: leave the folder scope
 Esc             Close the preview, clear the search, then hide the window
 
@@ -27,6 +27,7 @@ PORTABLE
     runtime\   Python runtime (only what the app needs)
     app\       the program
     data\      your settings, the index, the log, and the window cache
+    third_party\  licences of the bundled software, and the source of its GPL parts
 - The app writes nothing to the registry and nothing to the Startup folder. Only if you turn
   on "Start with Windows" (Settings, or the tray menu) it adds one value for your user under
   HKCU\Software\Microsoft\Windows\CurrentVersion\Run. Turning it off removes it again.
@@ -34,6 +35,18 @@ PORTABLE
 - If the folder is on a USB drive that gets another drive letter, folders on that drive
   are moved to the new letter automatically.
 - To reset, quit the app and delete the data folder.
+
+PHOTOS AND VIDEOS
+-----------------
+Quick Look shows iPhone photos (HEIC), videos (MP4, MOV, WebM), and Snapchat files, also
+files without an extension. Videos in HEVC (the iPhone's "High Efficiency" format) play
+when Windows has the HEVC decoder ("HEVC Video Extensions" in the Microsoft Store).
+
+THIRD-PARTY SOFTWARE
+--------------------
+The app contains open-source software by others (Python, the user interface libraries,
+PDF.js, and libheif with x265 for HEIC photos). See THIRD_PARTY_NOTICES.md and the
+third_party folder: the licences, and the complete source code of the GPL and LGPL parts.
 
 REQUIREMENTS
 ------------

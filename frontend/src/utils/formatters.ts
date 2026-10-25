@@ -32,12 +32,13 @@ export function formatCount(n: number): string {
 }
 
 /** Kind of file for icons and colors. */
-export type FileKind = 'code' | 'markdown' | 'data' | 'media' | 'pdf' | 'epub' | 'word' | 'excel' | 'powerpoint' | 'text' | 'other';
+export type FileKind = 'code' | 'markdown' | 'data' | 'media' | 'video' | 'pdf' | 'epub' | 'word' | 'excel' | 'powerpoint' | 'text' | 'other';
 
 const TEXT_EXT = new Set(['.txt', '.log', '.rtf', '.ini', '.cfg', '.conf', '.env', '.odt']);
 const WORD_EXT = new Set(['.doc', '.docx', '.docm']);
 const EXCEL_EXT = new Set(['.xls', '.xlsx', '.xlsm']);
 const POWERPOINT_EXT = new Set(['.ppt', '.pptx', '.pptm']);
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.webm', '.3gp', '.3g2', '.mkv', '.avi', '.wmv', '.mpg', '.mpeg', '.mts', '.m2ts', '.qt']);
 
 export function fileKind(category: string, extension: string): FileKind {
   const ext = extension.toLowerCase();
@@ -49,6 +50,7 @@ export function fileKind(category: string, extension: string): FileKind {
   if (category === 'code') return 'code';
   if (category === 'markdown') return 'markdown';
   if (category === 'data') return 'data';
+  if (VIDEO_EXT.has(ext)) return 'video';
   if (category === 'media') return 'media';
   if (TEXT_EXT.has(ext)) return 'text';
   return 'other';
@@ -59,6 +61,7 @@ export const KIND_COLORS: Record<FileKind, { fg: string; bg: string }> = {
   markdown: { fg: '#7dd3fc', bg: 'rgba(56,189,248,0.11)' },
   data: { fg: '#6ee7b7', bg: 'rgba(52,211,153,0.11)' },
   media: { fg: '#fcd34d', bg: 'rgba(251,191,36,0.11)' },
+  video: { fg: '#f9a8d4', bg: 'rgba(236,72,153,0.11)' },
   pdf: { fg: '#fda4af', bg: 'rgba(251,113,133,0.11)' },
   epub: { fg: '#d8b4fe', bg: 'rgba(192,132,252,0.11)' },
   word: { fg: '#93b4ff', bg: 'rgba(59,130,246,0.14)' },

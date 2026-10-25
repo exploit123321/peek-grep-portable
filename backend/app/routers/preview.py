@@ -4,7 +4,7 @@ import os
 import urllib.parse
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from app.indexer.parsers import (
     CODE_EXTENSIONS,
     DATA_EXTENSIONS,
@@ -12,16 +12,33 @@ from app.indexer.parsers import (
     delimiter_name,
     detect_delimiter,
     MARKDOWN_EXTENSIONS,
-    MEDIA_EXTENSIONS,
     extract_epub_data,
-    extract_file_content,
     is_text_file,
     parse_csv_content,
 )
 from app.editing import edit_kind
 from app.indexer.office import OFFICE_EXTENSIONS, extract_office_preview, preview_kind
-from app.schemas import EpubChapter, EpubPreviewMeta, ImagePreviewMeta, PreviewResponse, TablePreviewData
-from app.state import require_allowed
+from app.media import (
+    BROWSER_IMAGE_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    MEDIA_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    VIDEO_MIME,
+    image_info,
+    media_extension,
+    preview_jpeg,
+    snapchat_overlay,
+    video_info,
+)
+from app.schemas import (
+    EpubChapter,
+    EpubPreviewMeta,
+    ImagePreviewMeta,
+    PreviewResponse,
+    TablePreviewData,
+    VideoPreviewMeta,
+)
+from app.state import require_allowed, settings_store
 
 router = APIRouter(prefix="/api", tags=["preview"])
 
@@ -60,6 +77,25 @@ LANGUAGE_MAP = {
     ".markdown": "markdown",
 }
 
+def _raw_url(path: str) -> str:
+    return f"/api/raw?path={urllib.parse.quote(path)}"
+
+
+@router.get("/image")
+async def get_image(path: str = Query(..., description="Absolute path to a photo")) -> Response:
+    """A photo the WebView cannot show (HEIC, HEIF, TIFF) as JPEG: upright, at most 2560 pixels."""
+    norm_path = os.path.normpath(os.path.abspath(path))
+    require_allowed(norm_path)
+    if not os.path.isfile(norm_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data = await run_in_threadpool(preview_jpeg, norm_path)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Cannot read this photo: {e}")
+    # The URL has the file's change time: the WebView may keep it
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/preview", response_model=PreviewResponse)
 async def get_preview(
     path: str = Query(..., description="Absolute path to file"),
@@ -79,33 +115,47 @@ async def get_preview(
     size_bytes = stat.st_size
     mtime = stat.st_mtime
 
-    raw_url = f"/api/raw?path={urllib.parse.quote(norm_path)}"
+    raw_url = _raw_url(norm_path)
 
-    # Determine preview type
-    if ext in MEDIA_EXTENSIONS:
-        searchable_text, meta = extract_file_content(norm_path)
-        img_info = meta.get("image_meta")
-        img_meta = None
-        if img_info:
-            img_meta = ImagePreviewMeta(
-                width=img_info["width"],
-                height=img_info["height"],
-                format=img_info["format"],
-                mode=img_info["mode"],
-                aspect_ratio=img_info["aspect_ratio"],
+    # Photos and videos: the content decides (HEIC named .jpg, Snapchat files without extension)
+    media_ext = media_extension(norm_path, ext)
+    if media_ext in MEDIA_EXTENSIONS:
+        overlay = snapchat_overlay(norm_path)
+        overlay_url = _raw_url(overlay) if overlay and settings_store.is_allowed(overlay) else None
+        if media_ext in IMAGE_EXTENSIONS:
+            info = await run_in_threadpool(image_info, norm_path)
+            # Without details (SVG) the WebView still shows it; HEIC without them cannot be read at all
+            if info is not None or media_ext in BROWSER_IMAGE_EXTENSIONS:
+                display_url = None
+                if media_ext not in BROWSER_IMAGE_EXTENSIONS:
+                    display_url = f"/api/image?path={urllib.parse.quote(norm_path)}&v={stat.st_mtime_ns}"
+                return PreviewResponse(
+                    editable=edit_kind(ext),
+                    path=norm_path,
+                    filename=filename,
+                    extension=ext,
+                    size_bytes=size_bytes,
+                    mtime=mtime,
+                    preview_type="image",
+                    image_meta=ImagePreviewMeta(**info) if info else None,
+                    raw_url=raw_url,
+                    display_url=display_url,
+                    overlay_url=overlay_url,
+                )
+        elif media_ext in VIDEO_EXTENSIONS:
+            info = await run_in_threadpool(video_info, norm_path) if media_ext in VIDEO_MIME else None
+            return PreviewResponse(
+                path=norm_path,
+                filename=filename,
+                extension=ext,
+                size_bytes=size_bytes,
+                mtime=mtime,
+                preview_type="video",
+                video_meta=VideoPreviewMeta(**info) if info else None,
+                media_mime=VIDEO_MIME.get(media_ext),
+                raw_url=raw_url,
+                overlay_url=overlay_url,
             )
-
-        return PreviewResponse(
-            editable=edit_kind(ext),
-            path=norm_path,
-            filename=filename,
-            extension=ext,
-            size_bytes=size_bytes,
-            mtime=mtime,
-            preview_type="image",
-            image_meta=img_meta,
-            raw_url=raw_url,
-        )
 
     if ext in OFFICE_EXTENSIONS:
         try:
@@ -287,5 +337,13 @@ async def get_raw_file(path: str = Query(..., description="Absolute path to file
     elif ext == ".epub":
         media_type = "application/epub+zip"
         headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(norm_path)}"'
+    else:
+        # Photos and videos by their content (a .mov plays as MP4; Snapchat files without extension)
+        kind = media_extension(norm_path, ext)
+        if kind in VIDEO_MIME:
+            media_type = VIDEO_MIME[kind]
+        elif kind in IMAGE_EXTENSIONS and kind != ext:
+            media_type = {".jpg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+                          ".avif": "image/avif"}.get(kind)
 
     return FileResponse(norm_path, media_type=media_type, headers=headers)

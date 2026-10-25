@@ -8,6 +8,7 @@ import { CodePreview, PlainPreview } from './previews/CodePreview';
 import { MarkdownPreview } from './previews/MarkdownPreview';
 import { TablePreview } from './previews/TablePreview';
 import { ImagePreview } from './previews/ImagePreview';
+import { VideoPreview } from './previews/VideoPreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { EpubPreview } from './previews/EpubPreview';
 import { DocumentPreview, SlidesPreview, WorkbookPreview } from './previews/OfficePreviews';
@@ -440,7 +441,25 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'table':
         return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} terms={activeTerms} /> : null;
       case 'image':
-        return current.raw_url ? <ImagePreview rawUrl={current.raw_url} filename={current.filename} imageMeta={current.image_meta} /> : null;
+        return current.raw_url ? (
+          <ImagePreview
+            rawUrl={current.raw_url}
+            displayUrl={current.display_url}
+            filename={current.filename}
+            imageMeta={current.image_meta}
+            overlayUrl={current.overlay_url}
+          />
+        ) : null;
+      case 'video':
+        return current.raw_url ? (
+          <VideoPreview
+            rawUrl={current.raw_url}
+            filename={current.filename}
+            meta={current.video_meta}
+            mime={current.media_mime}
+            overlayUrl={current.overlay_url}
+          />
+        ) : null;
       case 'pdf':
         return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} terms={activeTerms} /> : null;
       case 'epub':

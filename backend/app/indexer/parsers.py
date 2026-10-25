@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image
 import pypdf
 
+# Photos and videos (app/media.py: phones and Snapchat too)
+from app.media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS, VIDEO_EXTENSIONS  # noqa: F401
+
 # Silence noisy font/glyph/encoding warnings from pypdf and fonttools
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="pypdf")
@@ -27,7 +30,6 @@ CODE_EXTENSIONS = {
 
 MARKDOWN_EXTENSIONS = {".md", ".markdown", ".mdown", ".mkd", ".mdx"}
 DATA_EXTENSIONS = {".csv", ".tsv", ".tab"}
-MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"}
 DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".rtf", ".log", ".ini", ".cfg", ".conf", ".env", ".epub"}
 
 def get_file_category(extension: str) -> str:
@@ -374,7 +376,7 @@ def extract_file_content(filepath: str, max_size_bytes: int = 10 * 1024 * 1024) 
             return None, {"error": "File exceeds max size limit"}
 
         # Images
-        if ext in MEDIA_EXTENSIONS:
+        if ext in IMAGE_EXTENSIONS:
             try:
                 with Image.open(filepath) as img:
                     width, height = img.size

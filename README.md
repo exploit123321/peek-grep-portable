@@ -119,6 +119,20 @@ editing (typing then goes to the editor, not to the find box). PDFs too: they ar
 drawn in the app (pdf.js, in `frontend\dist`, no internet), the preview opens at the first hit, and
 hits on every page are counted.
 
+## Photos and videos
+
+The **Media** filter (Ctrl+5) lists photos and videos. Quick Look shows:
+
+| Files | Preview |
+|---|---|
+| iPhone photos `.heic` `.heif` (also `.tif`) | The photo, upright, with the camera and the date it was taken. Turned into JPEG for the preview (libheif, see below); the file is not changed |
+| `.jpg` `.png` `.gif` `.webp` `.avif` `.bmp` `.svg` | The image |
+| Videos `.mp4` `.mov` `.m4v` `.webm` `.3gp` `.mkv` | A player, with the length, size, codec, and (iPhone) the phone and the recording date |
+| HEVC videos (the iPhone's "High Efficiency" setting) | Play where Windows has the HEVC decoder (the "HEVC Video Extensions" from the Microsoft Store; many PCs have it). Without it the preview says so; **Open** plays the video in its app |
+| ProRes, `.avi` `.wmv` `.mpg` `.mts` | The details; **Open** plays them |
+| Snapchat memories `…-main.jpg` / `…-main.mp4` | With the text and stickers of the `…-overlay.png` next to it, drawn on top (a button turns it off) |
+| Files without an extension (Snapchat exports) | Shown by their content (JPEG, PNG, WebP, HEIC, MP4, MOV, WebM), and listed under Media |
+
 ## Editing (Quick Look > Edit)
 
 | Format | What you can edit |
@@ -164,6 +178,14 @@ Change these in the app: **… > Settings** (start with Windows, the window, fro
 Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of the app can be
 changed there, also the global show/hide key, and the app saves them in this file at once.
 Quit the app before you edit this file by hand.
+
+## Third-party software
+
+The app contains open-source software by others: Python and its packages, the UI libraries,
+PDF.js, and for HEIC photos pillow-heif with libheif, libde265, and x265 (GPL version 2). See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): every component, its licence, and the
+[`third_party`](third_party) folder with the licence texts and the complete source code of the
+GPL and LGPL parts. The build copies all of it into the app (next to `PeekGrep.exe`).
 
 ## Build (nothing to install)
 

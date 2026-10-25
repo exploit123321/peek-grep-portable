@@ -65,7 +65,8 @@ def test_office_text_is_indexed_and_previewed(tmp_path):
     from app.state import settings_store
 
     for f in FIXTURES.iterdir():
-        (tmp_path / f.name).write_bytes(f.read_bytes())
+        if f.is_file():
+            (tmp_path / f.name).write_bytes(f.read_bytes())
     db_file = str(tmp_path / "idx.db")
     init_db(db_file)
     SafeDriveCrawler(roots=[str(tmp_path)], db_path=db_file, tracker=IndexerProgressTracker()).crawl_and_index()
