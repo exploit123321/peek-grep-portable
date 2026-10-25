@@ -42,6 +42,11 @@ Quick Look shows iPhone photos (HEIC), videos (MP4, MOV, WebM), and Snapchat fil
 files without an extension. Videos in HEVC (the iPhone's "High Efficiency" format) play
 when Windows has the HEVC decoder ("HEVC Video Extensions" in the Microsoft Store).
 
+LICENCE
+-------
+Peek & Grep Portable is licensed under the MIT License (LICENSE.txt). It covers the app's own code;
+the bundled third-party software keeps its own licences (below).
+
 THIRD-PARTY SOFTWARE
 --------------------
 The app contains open-source software by others (Python, the user interface libraries,

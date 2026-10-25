@@ -179,6 +179,11 @@ Change the keys in the app: **… > Keyboard shortcuts** (Ctrl+,). Every key of 
 changed there, also the global show/hide key, and the app saves them in this file at once.
 Quit the app before you edit this file by hand.
 
+## Licence
+
+Peek & Grep Portable is licensed under the MIT License, see [`LICENSE`](LICENSE). It covers this
+project's own code; the bundled third-party software keeps its own licences (below).
+
 ## Third-party software
 
 The app contains open-source software by others: Python and its packages, the UI libraries,

@@ -246,7 +246,7 @@ def zip_folder(folder: Path, out_zip: Path) -> None:
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in sorted(folder.rglob("*")):
             rel = path.relative_to(folder).as_posix()
-            if rel.split("/")[0] not in ("runtime", "app", "README.txt", "THIRD_PARTY_NOTICES.md", "third_party") \
+            if rel.split("/")[0] not in ("runtime", "app", "README.txt", "LICENSE.txt", "THIRD_PARTY_NOTICES.md", "third_party") \
                     or "__pycache__" in rel.split("/"):
                 continue
             if path.is_file():
@@ -279,6 +279,7 @@ def main() -> None:
     copy_app(folder / "app")
     shutil.copy2(HERE / "README.txt", folder / "README.txt")
     # Licences of the bundled software, and the source of its GPL and LGPL parts (they go wherever the app goes)
+    shutil.copy2(PROJECT / "LICENSE", folder / "LICENSE.txt")
     shutil.copy2(PROJECT / "THIRD_PARTY_NOTICES.md", folder / "THIRD_PARTY_NOTICES.md")
     shutil.copytree(PROJECT / "third_party", folder / "third_party")
     precompile(folder)

@@ -1,7 +1,8 @@
 # Third-party software
 
 Peek & Grep Portable's own code is in this repository (`backend/`, `frontend/src/`, `desktop_app.py`,
-`portable/`). The portable app (`vendor/runtime`, `frontend/dist`, and `PeekGrep.exe`) also contains
+`portable/`) and is licensed under the MIT License ([`LICENSE`](LICENSE)). The MIT License covers
+only that code; the parts below keep their own licences. The portable app (`vendor/runtime`, `frontend/dist`, and `PeekGrep.exe`) also contains
 the software below. Each part keeps its own licence. The licence texts are in
 [`third_party/licenses`](third_party/licenses) and, for Python packages, in each package's
 `.dist-info` folder in `vendor/runtime/Lib/site-packages`. The built app has the same files in its
