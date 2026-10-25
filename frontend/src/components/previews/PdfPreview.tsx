@@ -46,7 +46,9 @@ function itemAt(starts: number[], pos: number): number {
 
 const asset = (dir: string) => new URL(`pdfjs/${dir}/`, document.baseURI).href;
 
-export const PdfPreview: React.FC<{ rawUrl: string; filename: string; terms?: HighlightTerm[] }> = ({ rawUrl, filename, terms }) => {
+export const PdfPreview: React.FC<{ rawUrl: string; filename: string; terms?: HighlightTerm[]; zoom?: number }> = ({
+  rawUrl, filename, terms, zoom = 1,
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<Size[]>([]);
@@ -133,11 +135,22 @@ export const PdfPreview: React.FC<{ rawUrl: string; filename: string; terms?: Hi
     return () => ro.disconnect();
   }, []);
 
-  // Fit the widest page to the window
+  // Fit the widest page to the window, times the zoom of Quick Look (pages are drawn again, sharp)
   const scale = useMemo(() => {
     const widest = Math.max(1, ...sizes.map(s => s.w));
-    return Math.max(0.25, Math.min(2, (view.width - PAD * 2) / widest));
-  }, [sizes, view.width]);
+    return Math.max(0.25, Math.min(2, (view.width - PAD * 2) / widest)) * zoom;
+  }, [sizes, view.width, zoom]);
+  // A new scale (zoom, window size): the same place of the document stays in view
+  const lastScale = useRef(scale);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const old = lastScale.current;
+    lastScale.current = scale;
+    if (el && old && old !== scale) {
+      el.scrollTop = el.scrollTop * (scale / old);
+      el.scrollLeft = el.scrollLeft * (scale / old);
+    }
+  }, [scale]);
   const tops = useMemo(() => {
     const out: number[] = [];
     let y = PAD;

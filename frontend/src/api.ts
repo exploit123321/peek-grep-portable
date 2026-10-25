@@ -168,6 +168,8 @@ interface PyWebviewApi {
   pick_folders?: () => Promise<string[]>;
   open_data_folder?: () => Promise<void>;
   quit_app?: () => Promise<void>;
+  /** Drag these files out of the window, as from Explorer (while the mouse button is down) */
+  drag_files?: (paths: string[]) => Promise<boolean>;
 }
 
 export function desktop(): PyWebviewApi | null {

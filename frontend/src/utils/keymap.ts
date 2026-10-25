@@ -8,7 +8,8 @@ export type ActionId =
   | 'category_1' | 'category_2' | 'category_3' | 'category_4' | 'category_5'
   | 'move_down' | 'move_up' | 'preview' | 'open' | 'reveal' | 'copy_path'
   | 'expand' | 'collapse' | 'expand_all'
-  | 'find_in_preview' | 'next_hit' | 'prev_hit' | 'close_preview' | 'edit_file' | 'save_edit';
+  | 'find_in_preview' | 'next_hit' | 'prev_hit' | 'close_preview' | 'edit_file' | 'save_edit'
+  | 'zoom_in' | 'zoom_out' | 'zoom_reset' | 'wrap_lines';
 
 /** Where a key works: the result list, Quick Look, or both. */
 export type KeyContext = 'results' | 'preview' | 'both';
@@ -48,6 +49,10 @@ export const ACTIONS: ActionDef[] = [
   { id: 'close_preview', label: 'Close Quick Look', section: 'Quick Look', context: 'preview', defaults: ['Escape'] },
   { id: 'edit_file', label: 'Edit the file', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+E'] },
   { id: 'save_edit', label: 'Save the edit', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+S'] },
+  { id: 'zoom_in', label: 'Zoom in (also Ctrl + mouse wheel)', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+=', 'Ctrl++', 'Ctrl+Shift++'] },
+  { id: 'zoom_out', label: 'Zoom out', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+-'] },
+  { id: 'zoom_reset', label: 'Zoom to 100%', section: 'Quick Look', context: 'preview', defaults: ['Ctrl+0'] },
+  { id: 'wrap_lines', label: 'Wrap long lines on or off (text and code)', section: 'Quick Look', context: 'preview', defaults: ['Alt+Z'] },
 
   { id: 'shortcuts', label: 'Keyboard shortcuts', section: 'Window', context: 'results', defaults: ['Ctrl+,'] },
   { id: 'search_settings', label: 'Search settings', section: 'Window', context: 'results', defaults: ['Ctrl+.'] },

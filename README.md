@@ -113,6 +113,18 @@ press Ctrl+L. A table opens: edit, remove, or add values, choose **File names** 
 screen under the search field, with their hit counts. Cells pasted into the table (also into a value)
 become separate values, and **Split** turns a value with spaces into one value per word.
 
+**Zoom in Quick Look:** Ctrl + mouse wheel (or a touchpad pinch), Ctrl+= / Ctrl+− / Ctrl+0, or the
+− 100% + buttons. Text, code, tables, and documents keep the zoom for the next files; PDF pages are
+drawn again at the larger size. Photos zoom with the mouse wheel toward the pointer, a zoomed photo
+moves by dragging, and a double click switches between the whole photo and 2.5 times.
+
+**Long lines** in text and code wrap, so they can be read without scrolling sideways (the line number
+stays at its line; **Wrap** or Alt+Z turns it off). Editing never wraps, so the spacing is exactly what
+is saved, and the editor opens at the line that was at the top of the preview (and back).
+
+**Drag a file into another app:** drag a result, or the name of the file in Quick Look, into
+Telegram, a mail, Explorer, and so on, as if from Explorer. It is always a copy.
+
 **Find in Quick Look:** Ctrl+F, or just start typing. Wildcards and `a+b` work there too.
 Enter and Shift+Enter (or F3 and Shift+F3) go to the next and previous hit. Find also works while
 editing (typing then goes to the editor, not to the find box). PDFs too: they are

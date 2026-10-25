@@ -350,3 +350,34 @@ mark.edit-hit,
 mark.edit-hit-current { color: transparent; border-radius: 2px; }
 mark.edit-hit { background: rgba(250, 204, 21, 0.26); }
 mark.edit-hit-current { background: rgba(250, 204, 21, 0.6); }
+
+/* Text and code previews: one row per line, the number drawn by CSS (not text: Find and copying
+   leave it out). Wrapped lines go on under their own line, the number stays at the first row. */
+.code-lines .code-line {
+  position: relative;
+  padding-left: calc(var(--gutter) + 2.25rem);
+  white-space: pre;
+}
+.code-lines.code-wrap .code-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-lines .code-line::before {
+  content: attr(data-n);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--gutter) + 0.75rem);
+  padding-right: 0.75rem;
+  text-align: right;
+  color: var(--text-3);
+  opacity: 0.6;
+  border-right: 1px solid var(--line);
+  user-select: none;
+}
+/* Long files: the browser lays out only the blocks near the view */
+.code-lines .code-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 8000px;
+}

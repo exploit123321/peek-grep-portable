@@ -52,14 +52,26 @@ const CHAR_W = 7.22; // 12px monospace
 
 // -- Text ---------------------------------------------------------------------------
 
-export const TextEditor: React.FC<EditorProps & { initial?: string }> = ({ model, onChange, initial, terms }) => {
+/** The line at the top of the text editor (for the preview to go back there). */
+export function editorTopLine(root: HTMLElement | null): number | null {
+  const el = root?.querySelector<HTMLElement>('[data-text-editor]');
+  return el ? Math.floor(Math.max(0, el.scrollTop - 16) / LINE_H) + 1 : null;
+}
+
+// Never wrapped: every line is one row, so the spacing is exactly what is saved
+export const TextEditor: React.FC<EditorProps & { initial?: string; initialLine?: number | null }> = ({
+  model, onChange, initial, terms, initialLine,
+}) => {
   const original = initial ?? model.text ?? '';
   const [text, setText] = useState(original);
   const ref = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [shiftX, setShiftX] = useState(0);
-  // No scrolling to the cursor: the editor opens where the preview was
-  useEffect(() => ref.current?.focus({ preventScroll: true }), []);
+  // No scrolling to the cursor: the editor opens where the preview was (at its top line)
+  useLayoutEffect(() => {
+    if (initialLine && scrollRef.current) scrollRef.current.scrollTop = 16 + (initialLine - 1) * LINE_H;
+    ref.current?.focus({ preventScroll: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const lines = useMemo(() => text.split('\n').length, [text]);
 
   // Hits: marked on a layer behind the (transparent) text field
@@ -93,7 +105,7 @@ export const TextEditor: React.FC<EditorProps & { initial?: string }> = ({ model
 
   return (
     <div className="flex flex-col h-full">
-      <div ref={scrollRef} className="flex-1 min-h-0 flex overflow-auto">
+      <div ref={scrollRef} data-text-editor className="flex-1 min-h-0 flex overflow-auto">
         <pre className="select-none text-right pl-3 pr-3 py-4 font-mono text-[12px] leading-[1.65] text-fg-3 opacity-60" style={{ borderRight: '1px solid var(--line)' }}>
           {Array.from({ length: lines }, (_, i) => i + 1).join('\n')}
         </pre>

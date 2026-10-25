@@ -4,6 +4,7 @@ import { SearchItem } from '../api';
 import { FileIcon } from './FileIcon';
 import { fileKind, formatBytes, formatRelativeTime } from '../utils/formatters';
 import { compactCrumbs, folderCrumbs, highlightName } from '../utils/paths';
+import { fileDragProps } from '../utils/fileDrag';
 import { HighlightTerm } from '../utils/query';
 
 // One highlight glides between rows (matrix refs R41 Command Menu, X04 result rows).
@@ -207,6 +208,8 @@ export const ResultsList: React.FC<ResultsListProps> = ({
               ref={setRef(row.key)}
               onClick={() => onSelect(idx)}
               onDoubleClick={() => onOpen(item)}
+              // Drag the file into another app (Telegram, mail, Explorer)
+              {...fileDragProps(() => ({ paths: [item.path], rawUrl: `/api/raw?path=${encodeURIComponent(item.path)}`, filename: item.filename }))}
               className={`group relative flex gap-3 pr-3 py-2.5 rounded-xl cursor-default ${nested ? 'pl-12' : 'pl-6'} ${enter}`}
               style={{
                 ['--i' as string]: order ?? 0,

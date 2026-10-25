@@ -115,7 +115,7 @@ from app.main import (  # noqa: E402
     set_toggle_maximize_callback,
 )
 from app.screens import place_window  # noqa: E402
-from app.state import index_manager, settings_store  # noqa: E402
+from app.state import allowed_files, index_manager, settings_store  # noqa: E402
 
 # Global State
 window_visible = False
@@ -558,8 +558,37 @@ def exit_application(icon=None, item=None):
     os._exit(0)
 
 
+def drag_files(paths) -> bool:
+    """Drag files out of the window as from Explorer (into Telegram, mail, Explorer, ...).
+
+    The page asks for it while the mouse button is still down; Windows drag and drop then runs on
+    the window's thread. Always a copy: dropping into Explorer never moves the file away."""
+    files = allowed_files(paths)
+    if not files or not main_window:
+        return False
+    try:
+        from System import Array, Func, String, Type  # pythonnet, loaded by pywebview
+        from System.Windows.Forms import DataFormats, DataObject, DragDropEffects
+
+        form = main_window.native
+
+        def start():
+            data = DataObject(DataFormats.FileDrop, Array[String](files))
+            form.DoDragDrop(data, DragDropEffects.Copy)
+            return None
+
+        form.Invoke(Func[Type](start))
+        return True
+    except Exception as e:
+        print(f"[Desktop App] Drag out failed: {e}")
+        return False
+
+
 class DesktopApi:
     """JS bridge exposed to the React frontend as window.pywebview.api."""
+
+    def drag_files(self, paths) -> bool:
+        return drag_files(paths)
 
     def hide_window(self):
         hide_window()

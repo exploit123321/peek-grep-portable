@@ -1,13 +1,13 @@
 import React, { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code, Copy, Eye, ExternalLink, FolderOpen, Pencil, Save, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Code, Copy, Eye, ExternalLink, FolderOpen, Minus, Pencil, Plus, Save, Search, WrapText, X } from 'lucide-react';
 import { api, Delimiter, EditModel, PreviewPayload, SearchItem } from '../api';
-import { CsvEditor, DocumentEditor, TextEditor, WorkbookEditor } from './editors/Editors';
+import { CsvEditor, DocumentEditor, editorTopLine, TextEditor, WorkbookEditor } from './editors/Editors';
 import { useToast } from './Toasts';
 import { FileIcon } from './FileIcon';
-import { CodePreview, PlainPreview } from './previews/CodePreview';
+import { CodePreview, PlainPreview, scrollToCodeLine, topCodeLine } from './previews/CodePreview';
 import { MarkdownPreview } from './previews/MarkdownPreview';
 import { TablePreview } from './previews/TablePreview';
-import { ImagePreview } from './previews/ImagePreview';
+import { ImagePreview, ZoomCommand } from './previews/ImagePreview';
 import { VideoPreview } from './previews/VideoPreview';
 import { PdfPreview } from './previews/PdfPreview';
 import { EpubPreview } from './previews/EpubPreview';
@@ -21,6 +21,7 @@ import { ACTIONS, bindingParts, eventToBinding, Keymap, matches } from '../utils
 import { AnchorContext, FreezeContext, GridAnchor, HitReport, HitsContext, JumpContext } from './VirtualGrid';
 import { FreezeControl } from './FreezeControl';
 import { FileFreeze, fileFreeze, parseFreeze, setFileFreeze } from '../utils/freeze';
+import { fileDragProps } from '../utils/fileDrag';
 import { prefersReducedMotion } from './motion/useReducedMotion';
 
 // Quick Look grows out of the selected row and sharpens from a blur (matrix ref R03 Blur Reveal).
@@ -39,6 +40,28 @@ interface QuickLookModalProps {
   searchOptions?: SearchOptions;
   /** After a save: the file is indexed again, so the results can be refreshed */
   onSaved?: (item: SearchItem) => void;
+}
+
+// Zoom of the preview: text, tables, and documents (CSS zoom), PDF pages (drawn larger); photos zoom
+// themselves. One level for all files, kept in this browser profile like the wrap setting.
+const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const CSS_ZOOM_TYPES = new Set(['code', 'plain', 'markdown', 'table', 'document', 'epub', 'slides', 'workbook']);
+
+function stored<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : (JSON.parse(raw) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function store(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // No storage: the setting lasts until the app closes
+  }
 }
 
 /** "14:05" for a backup made today, else "21 Oct 14:05" (from its name: "plan 2026-10-21 14-05-09.txt") */
@@ -71,6 +94,9 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [raw, setRaw] = useState(false);
+  const [zoom, setZoom] = useState<number>(() => stored('pg-preview-zoom', 1));
+  const [wrap, setWrap] = useState<boolean>(() => stored('pg-preview-wrap', true));
+  const [imageZoom, setImageZoom] = useState<ZoomCommand | null>(null);
   const [delimiter, setDelimiter] = useState<Delimiter>('auto');
   const [reload, setReload] = useState(0);
   const [editModel, setEditModel] = useState<EditModel | null>(null);
@@ -95,8 +121,11 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   const anchorRef = useRef<GridAnchor | null>(null);
   const [sheet, setSheet] = useState(0);
   const scrollRatio = useRef<number | null>(null);
+  // Text and code: the line at the top (the preview wraps lines, the editor does not)
+  const placeLine = useRef<number | null>(null);
   useEffect(() => {
     anchorRef.current = null;
+    placeLine.current = null;
     setSheet(0);
   }, [item?.path]);
   const mainScroller = (): HTMLElement | null => {
@@ -109,13 +138,27 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
   };
   const keepPlace = () => {
     if (anchorRef.current) anchorRef.current.restore = true;
+    placeLine.current = editModel ? editorTopLine(bodyRef.current) : topCodeLine(bodyRef.current);
     const el = mainScroller();
-    scrollRatio.current = el ? el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight) : null;
+    scrollRatio.current = placeLine.current === null && el ? el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight) : null;
   };
 
   // Text views: the same part of the file (tables restore themselves from the anchor)
   const gridShown = editModel ? editModel.kind === 'csv' || editModel.kind === 'workbook' : current?.preview_type === 'table' || current?.preview_type === 'workbook';
   useEffect(() => {
+    const line = placeLine.current;
+    if (line !== null) {
+      // The editor opens at the line itself (initialLine); the preview scrolls to it when drawn
+      let raf = 0;
+      if (!editing) raf = requestAnimationFrame(() => requestAnimationFrame(() => scrollToCodeLine(bodyRef.current, line)));
+      const timer = window.setTimeout(() => {
+        placeLine.current = null;
+      }, 1500);
+      return () => {
+        cancelAnimationFrame(raf);
+        window.clearTimeout(timer);
+      };
+    }
     const ratio = scrollRatio.current;
     if (ratio === null) return;
     if (gridShown) {
@@ -329,7 +372,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       setHits(found);
       setHitIndex(0);
       paintHits(found, 0);
-      if (found.length && firstRun && jumpFirst && scrollRatio.current === null) revealRange(found[0]);
+      if (found.length && firstRun && jumpFirst && scrollRatio.current === null && placeLine.current === null) revealRange(found[0]);
       firstRun = firstRun && !found.length;
     };
     // Views that render later (sheet tabs, chapters, large code) change the DOM: scan again
@@ -361,8 +404,56 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     revealRange(hits[next]);
   };
 
+  const previewType = editModel ? 'editor' : current?.preview_type;
+  const zoomKind = previewType === 'image' ? 'image' : previewType === 'pdf' ? 'pdf'
+    : previewType === 'editor' || (previewType && CSS_ZOOM_TYPES.has(previewType)) ? 'css' : null;
+  const canWrap = !editModel && (previewType === 'code' || previewType === 'plain' || (previewType === 'markdown' && raw));
+  const stepZoom = (dir: 1 | -1 | 0) => {
+    if (zoomKind === 'image') {
+      setImageZoom(z => ({ dir, n: (z?.n ?? 0) + 1 }));
+      return;
+    }
+    if (!zoomKind) return;
+    setZoom(z => {
+      const i = ZOOM_STEPS.findIndex(s => s >= z - 0.001);
+      const next = dir === 0 ? 1 : ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, (i < 0 ? ZOOM_STEPS.length - 1 : i) + dir))];
+      store('pg-preview-zoom', next);
+      return next;
+    });
+  };
+  const toggleWrap = () =>
+    setWrap(w => {
+      store('pg-preview-wrap', !w);
+      return !w;
+    });
+
+  // Ctrl + mouse wheel zooms (also a touchpad pinch); the WebView's own page zoom stays off
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      stepZoom(e.deltaY < 0 ? 1 : -1);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  });
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (matches(e, keymap.zoom_in) || matches(e, keymap.zoom_out) || matches(e, keymap.zoom_reset)) {
+        e.preventDefault();
+        e.stopPropagation();
+        stepZoom(matches(e, keymap.zoom_in) ? 1 : matches(e, keymap.zoom_out) ? -1 : 0);
+        return;
+      }
+      if (matches(e, keymap.wrap_lines) && canWrap) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleWrap();
+        return;
+      }
       if (matches(e, keymap.find_in_preview)) {
         e.preventDefault();
         e.stopPropagation();
@@ -409,7 +500,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     if (editModel) {
       switch (editModel.kind) {
         case 'text':
-          return <TextEditor model={editModel} terms={activeTerms} {...editorProps} />;
+          return <TextEditor model={editModel} terms={activeTerms} initialLine={placeLine.current} {...editorProps} />;
         case 'csv':
           return <CsvEditor model={editModel} terms={activeTerms} {...editorProps} />;
         case 'workbook':
@@ -435,9 +526,9 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
     }
     switch (current.preview_type) {
       case 'code':
-        return <CodePreview content={current.content || ''} language={current.language} />;
+        return <CodePreview content={current.content || ''} language={current.language} wrap={wrap} />;
       case 'markdown':
-        return <MarkdownPreview content={current.content || ''} raw={raw} />;
+        return <MarkdownPreview content={current.content || ''} raw={raw} wrap={wrap} />;
       case 'table':
         return current.table_data ? <TablePreview tableData={current.table_data} delimiter={delimiter} onDelimiterChange={setDelimiter} terms={activeTerms} /> : null;
       case 'image':
@@ -448,6 +539,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
             filename={current.filename}
             imageMeta={current.image_meta}
             overlayUrl={current.overlay_url}
+            zoomCommand={imageZoom}
           />
         ) : null;
       case 'video':
@@ -461,7 +553,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           />
         ) : null;
       case 'pdf':
-        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} terms={activeTerms} /> : null;
+        return current.raw_url ? <PdfPreview rawUrl={current.raw_url} filename={current.filename} terms={activeTerms} zoom={zoom} /> : null;
       case 'epub':
         return <EpubPreview filename={current.filename} epubData={current.epub_data} />;
       case 'document':
@@ -471,7 +563,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
       case 'slides':
         return <SlidesPreview slides={current.slides || []} />;
       case 'plain':
-        return <PlainPreview content={current.content || ''} />;
+        return <PlainPreview content={current.content || ''} wrap={wrap} />;
       default:
         return (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
@@ -503,9 +595,22 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
         aria-label={`Quick Look: ${item.filename}`}
       >
         <div className="flex items-center gap-3 h-[58px] pl-4 pr-3 shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
-          <FileIcon kind={kind} />
+          {/* The icon and the name: drag the file into another app (Telegram, mail, Explorer) */}
+          <span
+            className="shrink-0 cursor-grab active:cursor-grabbing"
+            title="Drag the file into another app (Telegram, mail, Explorer)"
+            {...fileDragProps(() => ({ paths: [item.path], rawUrl: current?.raw_url, filename: item.filename }))}
+          >
+            <FileIcon kind={kind} />
+          </span>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="truncate text-[14px] font-semibold text-fg select-text">{item.filename}</span>
+            <span
+              className="truncate text-[14px] font-semibold text-fg cursor-grab active:cursor-grabbing self-start max-w-full"
+              title="Drag the file into another app (Telegram, mail, Explorer)"
+              {...fileDragProps(() => ({ paths: [item.path], rawUrl: current?.raw_url, filename: item.filename }))}
+            >
+              {item.filename}
+            </span>
             <span className="flex items-center gap-1 min-w-0 font-mono text-[11px] text-fg-3">
               {crumbs.map((c, i) => (
                 <React.Fragment key={i}>
@@ -516,6 +621,29 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
             </span>
           </div>
           {isGrid && <FreezeControl global={globalFreeze} own={ownFreeze} onChange={changeFreeze} />}
+          {canWrap && (
+            <button
+              type="button"
+              className={`btn !h-7 !px-2 ${wrap ? 'text-accent' : ''}`}
+              onClick={toggleWrap}
+              title={`Wrap long lines (${keymap.wrap_lines.join(', ') || 'no key'}). Editing never wraps: the spacing stays exact`}
+            >
+              <WrapText className="w-3.5 h-3.5" /> Wrap
+            </button>
+          )}
+          {(zoomKind === 'css' || zoomKind === 'pdf') && (
+            <span className="flex items-center h-7 rounded-lg" style={{ boxShadow: 'inset 0 0 0 1px var(--line)' }} title="Zoom: Ctrl + mouse wheel, Ctrl + / Ctrl − / Ctrl 0">
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => stepZoom(-1)} title={`Zoom out (${keymap.zoom_out[0] ?? ''})`}>
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" className="num text-[11.5px] text-fg-2 w-10 text-center hover:text-fg" onClick={() => stepZoom(0)} title={`100% (${keymap.zoom_reset[0] ?? ''})`}>
+                {Math.round(zoom * 100)}%
+              </button>
+              <button type="button" className="icon-btn !w-6 !h-6" onClick={() => stepZoom(1)} title={`Zoom in (${keymap.zoom_in[0] ?? ''})`}>
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          )}
           {!findOpen && (
             <button type="button" className="icon-btn" onClick={openFind} title={`Find in the preview (${keymap.find_in_preview.join(', ') || 'no key'})`}>
               <Search className="w-4 h-4" />
@@ -637,7 +765,10 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
             </div>
           )}
           <div ref={bodyRef} className="absolute inset-0">
-            {body()}
+            {/* Always this wrapper: adding it only when zoomed would draw the preview anew (scroll lost) */}
+            <div className="absolute inset-0" style={zoomKind === 'css' && zoom !== 1 ? { zoom } : undefined}>
+              {body()}
+            </div>
           </div>
         </div>
         </HitsContext.Provider>
@@ -655,6 +786,7 @@ export const QuickLookModal: React.FC<QuickLookModalProps> = ({
           <div className="flex items-center gap-3 whitespace-nowrap overflow-hidden">
             <KeyHint keys={[keymap.move_up[0], keymap.move_down[0]]} label="Next file" />
             <KeyHint keys={[keymap.find_in_preview[0]]} label="Find" />
+            {zoomKind && <KeyHint keys={[keymap.zoom_in[0]]} label="Zoom" />}
             <KeyHint keys={[keymap.open[0]]} label="Open" />
             <KeyHint keys={[keymap.close_preview[0]]} label="Close" />
           </div>
