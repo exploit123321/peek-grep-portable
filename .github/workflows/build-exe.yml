@@ -1,0 +1,35 @@
+name: Build PeekGrep.exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/intelligent-franklin-nkyku3
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Build the portable exe
+        shell: cmd
+        # Drive the build with the runner's Python. The build itself bundles the
+        # committed vendor\runtime and frontend\dist, and compiles the launcher
+        # with the .NET Framework csc.exe that ships on windows-latest.
+        run: python portable\build_portable.py
+
+      - name: Upload single-file exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeekGrep-exe
+          path: release/PeekGrep.exe
+          if-no-files-found: error
+
+      - name: Upload portable folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeekGrep-portable-folder
+          path: release/PeekGrep/
+          if-no-files-found: error
