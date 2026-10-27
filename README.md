@@ -1,15 +1,14 @@
-﻿# Peek & Grep Portable 3.0
+﻿# Peek & Grep Portable 
 
-A portable copy of Peek & Grep (original: `D:\New folder\peek-grep`, not changed).
 It searches file names and the text inside files, with a Quick Look preview. It reads only
 the working folders that the user selects on the first start.
 
-## What changed from the original
+## Features
 
 - **Portable:** a bundled, isolated Python 3.14 runtime (`runtime\`, with a `._pth` file). All state is in `data\` next to the app. No registry entries (only the optional Start with Windows entry), no Startup shortcut. A free local port instead of 8000. One app per data folder: a second start shows the open window.
 - **Working folders first:** nothing is scanned, watched, previewed, or opened outside the allowed folders. The API returns 403 for other paths. Removing a folder deletes its index entries. A full rescan also removes deleted files. A changed file goes back to the text queue. Same-drive folders follow a new USB drive letter.
 - **Security:** no CORS, a host-name check, a CSP without inline scripts, HTML-escaped snippets, sanitized Markdown and EPUB HTML, and sandboxed raw files.
-- **New UI** (React, Tailwind; pdf.js for the PDF preview). See the motion references below.
+
 
 ## Smart search
 
